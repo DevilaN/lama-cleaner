@@ -1,0 +1,32 @@
+version: '3.9'
+
+x-base_service: &base_service
+    ports:
+      - "8080:8080"
+    volumes:
+      - &v1 ./cache/torch:/root/.cache/torch
+      - &v2 ./cache/huggingface:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+              - driver: nvidia
+                device_ids: ['0']
+                capabilities: [gpu]
+
+services:
+  lama-cpu:
+    <<: *base_service
+    profiles: ["cpu"]
+    image: lama-cleaner-cpu
+    build:
+      dockerfile: ./docker/CPUDockerfile
+    command: lama-cleaner --device=cpu --port=8080 --sd-run-local --host=0.0.0.0
+
+  lama-cuda:
+    <<: *base_service
+    profiles: ["cuda"]
+    image: lama-cleaner
+    build:
+      dockerfile: ./docker/GPUDockerfile
+    command: lama-cleaner --device=cuda --port=8080 --sd-run-local --host=0.0.0.0

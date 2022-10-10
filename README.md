@@ -11,6 +11,12 @@
   <a href="https://colab.research.google.com/drive/1e3ZkAJxvkK3uzaTGu91N9TvI_Mahs0Wb?usp=sharing">
     <img alt="Open in Colab" src="https://colab.research.google.com/assets/colab-badge.svg" />
   </a>
+  <a href="https://www.python.org/downloads/">
+    <img alt="python version" src="https://img.shields.io/badge/python-3.7+-blue.svg" />
+  </a>
+  <a href="https://hub.docker.com/r/cwq1913/lama-cleaner">
+    <img alt="version" src="https://img.shields.io/docker/pulls/cwq1913/lama-cleaner" />
+  </a>
 </p>
 
 ![img](./assets/dark.jpg)
@@ -105,13 +111,16 @@ Available command line arguments:
 | FcF   | :+1: Better structure and texture generation <br/> :neutral_face: Only support fixed size (512x512) input                                                                                                              |                                                                                                                                                                                                                                                                                   |
 | SD1.4 | :+1: SOTA text-to-image diffusion model                                                                                                                                                                                |                                                                                                                                                                                                                                                                                   |
 
-### LaMa vs LDM
+<details>
+<summary> See model comparison detail</summary>
+
+**LaMa vs LDM**
 
 | Original Image                                                                                                                            | LaMa                                                                                                                                                   | LDM                                                                                                                                                   |
 | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | ![photo-1583445095369-9c651e7e5d34](https://user-images.githubusercontent.com/3998421/156923525-d6afdec3-7b98-403f-ad20-88ebc6eb8d6d.jpg) | ![photo-1583445095369-9c651e7e5d34_cleanup_lama](https://user-images.githubusercontent.com/3998421/156923620-a40cc066-fd4a-4d85-a29f-6458711d1247.png) | ![photo-1583445095369-9c651e7e5d34_cleanup_ldm](https://user-images.githubusercontent.com/3998421/156923652-0d06c8c8-33ad-4a42-a717-9c99f3268933.png) |
 
-### LaMa vs ZITS
+**LaMa vs ZITS**
 
 | Original Image                                                                                                         | ZITS                                                                                                                       | LaMa                                                                                                                       |
 | ---------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
@@ -119,21 +128,23 @@ Available command line arguments:
 
 Image is from [ZITS](https://github.com/DQiaole/ZITS_inpainting) paper. I didn't find a good example to show the advantages of ZITS and let me know if you have a good example. There can also be possible problems with my code, if you find them, please let me know too!
 
-### LaMa vs FcF
+**LaMa vs FcF**
 
 | Original Image                                                                                                    | Lama                                                                                                                   | FcF                                                                                                                   |
 | ----------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | ![texture](https://user-images.githubusercontent.com/3998421/188305027-a4260545-c24e-4df7-9739-ac5dc3cae879.jpeg) | ![texture_lama](https://user-images.githubusercontent.com/3998421/188305024-2064ed3e-5af4-4843-ac10-7f9da71e15f8.jpeg) | ![texture_fcf](https://user-images.githubusercontent.com/3998421/188305006-a08d2896-a65f-43d5-b9a5-ef62c3129f0c.jpeg) |
 
+</details>
+
 ## Inpainting Strategy
 
 Lama Cleaner provides three ways to run inpainting model on images, you can change it in the settings dialog.
 
-| Strategy     | Description                                                                                                                                    | VRAM                 |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
-| **Original** | Use the resolution of the original image                                                                                                       | :tada:               |
-| **Resize**   | Resize the image to a smaller size before inpainting. Lama Cleaner will make sure that the area of the image outside the mask is not degraded. | :tada: :tada:        |
-| **Crop**     | Crop masking area from the original image to do inpainting                                                                                     | :tada: :tada: :tada: |
+| Strategy     | Description                                                                                            | VRAM   | Speed             |
+| ------------ | ------------------------------------------------------------------------------------------------------ | ------ | ----------------- |
+| **Original** | Use the resolution of the original image                                                               | High   | :zap:             |
+| **Resize**   | Resize the image to a smaller size before inpainting. The area outside the mask will not loss quality. | Midium | :zap: :zap:       |
+| **Crop**     | Crop masking area from the original image to do inpainting                                             | Low    | :zap: :zap: :zap: |
 
 ## Download Model Mannually
 
@@ -181,16 +192,21 @@ The cache directories for different models correspond as follows:
 docker run -p 8080:8080 \
 -v /path/to/torch_cache:/root/.cache/torch \
 -v /path/to/huggingface_cache:/root/.cache/huggingface \
---rm lamacleaner \
+--rm lama-cleaner:cpu-0.21.0 \
 lama-cleaner --device=cpu --port=8080 --host=0.0.0.0
 ```
 
 ### Run Docker (gpu)
 
+- cuda11.6
+- pytorch1.12.1
+- minimum nvidia driver 510.39.01+
+
 ```
 docker run --gpus all -p 8080:8080 \
 -v /path/to/torch_cache:/root/.cache/torch \
 -v /path/to/huggingface_cache:/root/.cache/huggingface \
+--rm lama-cleaner:cpu-0.21.0 \
 lama-cleaner --device=cuda --port=8080 --host=0.0.0.0
 ```
 
@@ -205,9 +221,6 @@ docker build -f ./docker/CPUDockerfile -t lamacleaner .
 ```
 
 gpu & cpu
-
-- cuda11.6
-- pytorch1.12.1
 
 ```
 docker build -f ./docker/GPUDockerfile -t lamacleaner .

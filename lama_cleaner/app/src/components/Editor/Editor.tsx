@@ -33,6 +33,7 @@ import {
 } from '../../utils'
 import {
   croperState,
+  fileState,
   isInpaintingState,
   isSDState,
   propmtState,
@@ -44,13 +45,12 @@ import {
 import useHotKey from '../../hooks/useHotkey'
 import Croper from '../Croper/Croper'
 import emitter, { EVENT_PROMPT } from '../../event'
+import FileSelect from '../FileSelect/FileSelect'
 
 const TOOLBAR_SIZE = 200
+const MIN_BRUSH_SIZE = 10
+const MAX_BRUSH_SIZE = 200
 const BRUSH_COLOR = '#ffcc00bb'
-
-interface EditorProps {
-  file: File
-}
 
 interface Line {
   size?: number
@@ -85,8 +85,8 @@ function mouseXY(ev: SyntheticEvent) {
   return { x: mouseEvent.offsetX, y: mouseEvent.offsetY }
 }
 
-export default function Editor(props: EditorProps) {
-  const { file } = props
+export default function Editor() {
+  const [file, setFile] = useRecoilState(fileState)
   const promptVal = useRecoilValue(propmtState)
   const settings = useRecoilValue(settingState)
   const [seedVal, setSeed] = useRecoilState(seedState)
@@ -110,6 +110,14 @@ export default function Editor(props: EditorProps) {
   const [showBrush, setShowBrush] = useState(false)
   const [showRefBrush, setShowRefBrush] = useState(false)
   const [isPanning, setIsPanning] = useState<boolean>(false)
+  const [isChangingBrushSizeByMouse, setIsChangingBrushSizeByMouse] =
+    useState<boolean>(false)
+  const [changeBrushSizeByMouseInit, setChangeBrushSizeByMouseInit] = useState({
+    x: -1,
+    y: -1,
+    brushSize: 20,
+  })
+
   const [showOriginal, setShowOriginal] = useState(false)
   const [scale, setScale] = useState<number>(1)
   const [panned, setPanned] = useState<boolean>(false)
@@ -186,6 +194,9 @@ export default function Editor(props: EditorProps) {
 
   const runInpainting = useCallback(
     async (prompt?: string, useLastLineGroup?: boolean) => {
+      if (file === undefined) {
+        return
+      }
       // useLastLineGroup 的影响
       // 1. 使用上一次的 mask
       // 2. 结果替换当前 render
@@ -485,6 +496,15 @@ export default function Editor(props: EditorProps) {
   }
 
   const onMouseDrag = (ev: SyntheticEvent) => {
+    if (isChangingBrushSizeByMouse) {
+      const initX = changeBrushSizeByMouseInit.x
+      // move right: increase brush size
+      const newSize = changeBrushSizeByMouseInit.brushSize + (x - initX)
+      if (newSize <= MAX_BRUSH_SIZE && newSize >= MIN_BRUSH_SIZE) {
+        setBrushSize(newSize)
+      }
+      return
+    }
     if (isPanning) {
       return
     }
@@ -551,6 +571,9 @@ export default function Editor(props: EditorProps) {
   }
 
   const onMouseDown = (ev: SyntheticEvent) => {
+    if (isChangingBrushSizeByMouse) {
+      return
+    }
     if (isPanning) {
       return
     }
@@ -781,6 +804,9 @@ export default function Editor(props: EditorProps) {
   )
 
   function download() {
+    if (file === undefined) {
+      return
+    }
     const name = file.name.replace(/(\.[\w\d_-]+)$/i, '_cleanup$1')
     const curRender = renders[renders.length - 1]
     downloadImage(curRender.currentSrc, name)
@@ -888,6 +914,21 @@ export default function Editor(props: EditorProps) {
     }
   )
 
+  useKeyPressEvent(
+    'Alt',
+    ev => {
+      ev?.preventDefault()
+      ev?.stopPropagation()
+      setIsChangingBrushSizeByMouse(true)
+      setChangeBrushSizeByMouseInit({ x, y, brushSize })
+    },
+    ev => {
+      ev?.preventDefault()
+      ev?.stopPropagation()
+      setIsChangingBrushSizeByMouse(false)
+    }
+  )
+
   const getCurScale = (): number => {
     let s = minScale
     if (viewportRef.current?.state.scale !== undefined) {
@@ -918,13 +959,20 @@ export default function Editor(props: EditorProps) {
     }
   }
 
-  return (
-    <div
-      className="editor-container"
-      aria-hidden="true"
-      onMouseMove={onMouseMove}
-      onMouseUp={onPointerUp}
-    >
+  const renderFileSelect = () => {
+    return (
+      <div className="landing-file-selector">
+        <FileSelect
+          onSelection={async f => {
+            setFile(f)
+          }}
+        />
+      </div>
+    )
+  }
+
+  const renderCanvas = () => {
+    return (
       <TransformWrapper
         ref={r => {
           if (r) {
@@ -939,7 +987,7 @@ export default function Editor(props: EditorProps) {
         limitToBounds={false}
         doubleClick={{ disabled: true }}
         initialScale={minScale}
-        minScale={minScale}
+        minScale={minScale * 0.6}
         onPanning={ref => {
           if (!panned) {
             setPanned(true)
@@ -961,7 +1009,7 @@ export default function Editor(props: EditorProps) {
               style={{
                 cursor: getCursor(),
                 clipPath: `inset(0 ${sliderPos}% 0 0)`,
-                transition: 'clip-path 350ms ease-in-out',
+                transition: 'clip-path 300ms cubic-bezier(0.4, 0, 0.2, 1)',
               }}
               onContextMenu={e => {
                 e.preventDefault()
@@ -1024,6 +1072,17 @@ export default function Editor(props: EditorProps) {
           )}
         </TransformComponent>
       </TransformWrapper>
+    )
+  }
+
+  return (
+    <div
+      className="editor-container"
+      aria-hidden="true"
+      onMouseMove={onMouseMove}
+      onMouseUp={onPointerUp}
+    >
+      {file === undefined ? renderFileSelect() : renderCanvas()}
 
       {showBrush && !isInpainting && !isPanning && (
         <div className="brush-shape" style={getBrushStyle(x, y)} />
@@ -1037,7 +1096,7 @@ export default function Editor(props: EditorProps) {
       )}
 
       <div className="editor-toolkit-panel">
-        {isSD ? (
+        {isSD || file === undefined ? (
           <></>
         ) : (
           <SizeSelector
@@ -1048,8 +1107,8 @@ export default function Editor(props: EditorProps) {
         )}
         <Slider
           label="Brush"
-          min={10}
-          max={150}
+          min={MIN_BRUSH_SIZE}
+          max={MAX_BRUSH_SIZE}
           value={brushSize}
           onChange={handleSliderChange}
           onClick={() => setShowRefBrush(false)}
@@ -1121,7 +1180,7 @@ export default function Editor(props: EditorProps) {
               setSliderPos(0)
               window.setTimeout(() => {
                 setShowOriginal(false)
-              }, 350)
+              }, 300)
             }}
             disabled={renders.length === 0}
           />

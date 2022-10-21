@@ -19,7 +19,7 @@
   </a>
 </p>
 
-![img](./assets/dark.jpg)
+https://user-images.githubusercontent.com/3998421/196976498-ba1ad3ab-fa18-4c55-965f-5c6683141375.mp4
 
 ## Features
 
@@ -32,7 +32,7 @@
   1. [ZITS](https://github.com/DQiaole/ZITS_inpainting)
   1. [MAT](https://github.com/fenglinglwb/MAT)
   1. [FcF](https://github.com/SHI-Labs/FcF-Inpainting)
-  1. [SD1.4](https://github.com/CompVis/stable-diffusion)
+  1. [SD1.5](https://github.com/runwayml/stable-diffusion)
 - Support CPU & GPU
 - Various inpainting [strategy](#inpainting-strategy)
 - Run as a desktop APP
@@ -81,14 +81,17 @@ lama-cleaner --model=lama --device=cpu --port=8080
 # Lama Cleaner is now running at http://localhost:8080
 ```
 
+For stable-diffusion model, you need to [accepting the terms to access](https://huggingface.co/runwayml/stable-diffusion-inpainting), and
+get an access token from here [huggingface access token](https://huggingface.co/docs/hub/security-tokens)
+
 If you prefer to use docker, you can check out [docker](#docker)
 
 Available command line arguments:
 
 | Name                 | Description                                                                                                                   | Default  |
 | -------------------- | ----------------------------------------------------------------------------------------------------------------------------- | -------- |
-| --model              | lama/ldm/zits/mat/fcf/sd1.4 See details in [Inpaint Model](#inpainting-model)                                                 | lama     |
-| --hf_access_token    | stable-diffusion(sd) model need [huggingface access token](https://huggingface.co/docs/hub/security-tokens) to download model |          |
+| --model              | lama/ldm/zits/mat/fcf/sd1.5 See details in [Inpaint Model](#inpainting-model)                                                 | lama     |
+| --hf_access_token    | stable-diffusion need [huggingface access token](https://huggingface.co/docs/hub/security-tokens) to download model |          |
 | --sd-run-local       | Once the model as downloaded, you can pass this arg and remove `--hf_access_token`                                            |          |
 | --sd-disable-nsfw    | Disable stable-diffusion NSFW checker.                                                                                        |          |
 | --sd-cpu-textencoder | Always run stable-diffusion TextEncoder model on CPU.                                                                         |          |
@@ -109,7 +112,7 @@ Available command line arguments:
 | ZITS  | :+1: Better holistic structures compared with previous methods <br/> :neutral_face: Wireframe module is **very** slow on CPU                                                                                           | `Wireframe`: Enable edge and line detect                                                                                                                                                                                                                                          |
 | MAT   | TODO                                                                                                                                                                                                                   |                                                                                                                                                                                                                                                                                   |
 | FcF   | :+1: Better structure and texture generation <br/> :neutral_face: Only support fixed size (512x512) input                                                                                                              |                                                                                                                                                                                                                                                                                   |
-| SD1.4 | :+1: SOTA text-to-image diffusion model                                                                                                                                                                                |                                                                                                                                                                                                                                                                                   |
+| SD1.5 | :+1: SOTA text-to-image diffusion model                                                                                                                                                                                |                                                                                                                                                                                                                                                                                   |
 
 <details>
 <summary> See model comparison detail</summary>
@@ -184,7 +187,7 @@ so you don't have to download the model every time you start the container.
 The cache directories for different models correspond as follows:
 
 - lama/ldm/zits/mat/fcf: /root/.cache/torch
-- sd1.4: /root/.cache/huggingface
+- sd1.5: /root/.cache/huggingface
 
 ### Run Docker (cpu)
 

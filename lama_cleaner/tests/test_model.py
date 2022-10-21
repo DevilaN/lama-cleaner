@@ -18,10 +18,8 @@ def get_data(fx=1, fy=1.0, img_p=current_dir / "image.png", mask_p=current_dir /
     img = cv2.imread(str(img_p))
     img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGB)
     mask = cv2.imread(str(mask_p), cv2.IMREAD_GRAYSCALE)
-
-    if fx != 1:
-        img = cv2.resize(img, None, fx=fx, fy=fy, interpolation=cv2.INTER_AREA)
-        mask = cv2.resize(mask, None, fx=fx, fy=fy, interpolation=cv2.INTER_NEAREST)
+    img = cv2.resize(img, None, fx=fx, fy=fy, interpolation=cv2.INTER_AREA)
+    mask = cv2.resize(mask, None, fx=fx, fy=fy, interpolation=cv2.INTER_NEAREST)
     return img, mask
 
 
@@ -40,6 +38,7 @@ def get_config(strategy, **kwargs):
 
 def assert_equal(model, config, gt_name, fx=1, fy=1, img_p=current_dir / "image.png", mask_p=current_dir / "mask.png"):
     img, mask = get_data(fx=fx, fy=fy, img_p=img_p, mask_p=mask_p)
+    print(f"Input image shape: {img.shape}")
     res = model(img, mask, config)
     cv2.imwrite(
         str(save_dir / gt_name),
@@ -159,10 +158,10 @@ def test_fcf(strategy):
 
 
 @pytest.mark.parametrize("strategy", [HDStrategy.ORIGINAL])
-@pytest.mark.parametrize("sampler", [SDSampler.ddim, SDSampler.pndm])
+@pytest.mark.parametrize("sampler", [SDSampler.ddim, SDSampler.pndm, SDSampler.k_lms])
 def test_sd(strategy, sampler):
-    def callback(step: int):
-        print(f"sd_step_{step}")
+    def callback(i, t, latents):
+        print(f"sd_step_{i}")
 
     sd_steps = 50
     model = ModelManager(name="sd1.4",
@@ -171,7 +170,7 @@ def test_sd(strategy, sampler):
                          sd_run_local=False,
                          sd_disable_nsfw=False,
                          sd_cpu_textencoder=False,
-                         callbacks=[callback])
+                         callback=callback)
     cfg = get_config(strategy, prompt='a cat sitting on a bench', sd_steps=sd_steps)
     cfg.sd_sampler = sampler
 
@@ -193,11 +192,12 @@ def test_sd(strategy, sampler):
 
 
 @pytest.mark.parametrize("strategy", [HDStrategy.ORIGINAL])
-@pytest.mark.parametrize("sampler", [SDSampler.ddim])
+@pytest.mark.parametrize("sampler", [SDSampler.ddim, SDSampler.pndm, SDSampler.k_lms])
 @pytest.mark.parametrize("disable_nsfw", [True, False])
-def test_sd_run_local(strategy, sampler, disable_nsfw):
-    def callback(step: int):
-        print(f"sd_step_{step}")
+@pytest.mark.parametrize("cpu_textencoder", [True, False])
+def test_sd_run_local(strategy, sampler, disable_nsfw, cpu_textencoder):
+    def callback(i, t, latents):
+        print(f"sd_step_{i}")
 
     sd_steps = 50
     model = ModelManager(
@@ -207,7 +207,7 @@ def test_sd_run_local(strategy, sampler, disable_nsfw):
         hf_access_token=None,
         sd_run_local=True,
         sd_disable_nsfw=disable_nsfw,
-        sd_cpu_textencoder=True,
+        sd_cpu_textencoder=cpu_textencoder,
     )
     cfg = get_config(strategy, prompt='a cat sitting on a bench', sd_steps=sd_steps)
     cfg.sd_sampler = sampler
@@ -215,17 +215,45 @@ def test_sd_run_local(strategy, sampler, disable_nsfw):
     assert_equal(
         model,
         cfg,
-        f"sd_{strategy.capitalize()}_{sampler}_local_result.png",
+        f"sd_{strategy.capitalize()}_{sampler}_local_disablensfw_{disable_nsfw}_cputextencoder_{cpu_textencoder}_result.png",
         img_p=current_dir / "overture-creations-5sI6fQgYIuo.png",
         mask_p=current_dir / "overture-creations-5sI6fQgYIuo_mask.png",
+    )
+
+
+@pytest.mark.parametrize("strategy", [HDStrategy.ORIGINAL])
+@pytest.mark.parametrize("sampler", [SDSampler.ddim, SDSampler.pndm, SDSampler.k_lms])
+def test_runway_sd_1_5(strategy, sampler):
+    def callback(i, t, latents):
+        print(f"sd_step_{i}")
+
+    sd_steps = 20
+    model = ModelManager(name="sd1.5",
+                         device=device,
+                         hf_access_token=None,
+                         sd_run_local=True,
+                         sd_disable_nsfw=True,
+                         sd_cpu_textencoder=True,
+                         callback=callback)
+    cfg = get_config(strategy, prompt='a cat sitting on a bench', sd_steps=sd_steps)
+    cfg.sd_sampler = sampler
+
+    assert_equal(
+        model,
+        cfg,
+        f"runway_sd_{strategy.capitalize()}_{sampler}_result.png",
+        img_p=current_dir / "overture-creations-5sI6fQgYIuo.png",
+        mask_p=current_dir / "overture-creations-5sI6fQgYIuo_mask.png",
+        fx=1.3
     )
 
     assert_equal(
         model,
         cfg,
-        f"sd_{strategy.capitalize()}_{sampler}_blur_mask_local_result.png",
+        f"runway_sd_{strategy.capitalize()}_{sampler}_blur_mask_result.png",
         img_p=current_dir / "overture-creations-5sI6fQgYIuo.png",
         mask_p=current_dir / "overture-creations-5sI6fQgYIuo_mask_blur.png",
+        fy=1.3
     )
 
 

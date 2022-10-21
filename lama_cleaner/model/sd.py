@@ -4,11 +4,8 @@ import PIL.Image
 import cv2
 import numpy as np
 import torch
-from diffusers import PNDMScheduler, DDIMScheduler
+from diffusers import PNDMScheduler, DDIMScheduler, LMSDiscreteScheduler
 from loguru import logger
-from transformers import FeatureExtractionMixin, ImageFeatureExtractionMixin
-
-from lama_cleaner.helper import norm_img
 
 from lama_cleaner.model.base import InpaintModel
 from lama_cleaner.schema import Config, SDSampler
@@ -39,43 +36,28 @@ from lama_cleaner.schema import Config, SDSampler
 #     mask = torch.from_numpy(mask)
 #     return mask
 
-class DummyFeatureExtractorOutput:
-    def __init__(self, pixel_values):
-        self.pixel_values = pixel_values
+class CPUTextEncoderWrapper:
+    def __init__(self, text_encoder):
+        self.text_encoder = text_encoder.to(torch.device('cpu'), non_blocking=True)
+        self.text_encoder = self.text_encoder.to(torch.float32, non_blocking=True)
 
-    def to(self, device):
-        return self
-
-
-class DummyFeatureExtractor(FeatureExtractionMixin, ImageFeatureExtractionMixin):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def __call__(self, *args, **kwargs):
-        return DummyFeatureExtractorOutput(torch.empty(0, 3))
-
-
-class DummySafetyChecker:
-    def __init__(self, *args, **kwargs):
-        pass
-
-    def __call__(self, clip_input, images):
-        return images, False
+    def __call__(self, x):
+        input_device = x.device
+        return [self.text_encoder(x.to(self.text_encoder.device))[0].to(input_device)]
 
 
 class SD(InpaintModel):
-    pad_mod = 64  # current diffusers only support 64 https://github.com/huggingface/diffusers/pull/505
+    pad_mod = 8  # current diffusers only support 64 https://github.com/huggingface/diffusers/pull/505
     min_size = 512
 
     def init_model(self, device: torch.device, **kwargs):
-        from .sd_pipeline import StableDiffusionInpaintPipeline
+        from diffusers.pipelines.stable_diffusion import StableDiffusionInpaintPipeline
 
         model_kwargs = {"local_files_only": kwargs['sd_run_local']}
         if kwargs['sd_disable_nsfw']:
             logger.info("Disable Stable Diffusion Model NSFW checker")
             model_kwargs.update(dict(
-                feature_extractor=DummyFeatureExtractor(),
-                safety_checker=DummySafetyChecker(),
+                safety_checker=None,
             ))
 
         self.model = StableDiffusionInpaintPipeline.from_pretrained(
@@ -91,10 +73,9 @@ class SD(InpaintModel):
 
         if kwargs['sd_cpu_textencoder']:
             logger.info("Run Stable Diffusion TextEncoder on CPU")
-            self.model.text_encoder = self.model.text_encoder.to(torch.device('cpu'), non_blocking=True)
-            self.model.text_encoder = self.model.text_encoder.to(torch.float32, non_blocking=True )
+            self.model.text_encoder = CPUTextEncoderWrapper(self.model.text_encoder)
 
-        self.callbacks = kwargs.pop("callbacks", None)
+        self.callback = kwargs.pop("callback", None)
 
     @torch.cuda.amp.autocast()
     def forward(self, image, mask, config: Config):
@@ -125,7 +106,6 @@ class SD(InpaintModel):
             )
         elif config.sd_sampler == SDSampler.pndm:
             PNDM_kwargs = {
-                "tensor_format": "pt",
                 "beta_schedule": "scaled_linear",
                 "beta_start": 0.00085,
                 "beta_end": 0.012,
@@ -133,6 +113,8 @@ class SD(InpaintModel):
                 "skip_prk_steps": True,
             }
             scheduler = PNDMScheduler(**PNDM_kwargs)
+        elif config.sd_sampler == SDSampler.k_lms:
+            scheduler = LMSDiscreteScheduler(beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear")
         else:
             raise ValueError(config.sd_sampler)
 
@@ -148,15 +130,23 @@ class SD(InpaintModel):
             k = 2 * config.sd_mask_blur + 1
             mask = cv2.GaussianBlur(mask, (k, k), 0)[:, :, np.newaxis]
 
+        _kwargs = {
+            self.image_key: PIL.Image.fromarray(image),
+        }
+
+        img_h, img_w = image.shape[:2]
+
         output = self.model(
             prompt=config.prompt,
-            init_image=PIL.Image.fromarray(image),
             mask_image=PIL.Image.fromarray(mask[:, :, -1], mode="L"),
             strength=config.sd_strength,
             num_inference_steps=config.sd_steps,
             guidance_scale=config.sd_guidance_scale,
             output_type="np.array",
-            callbacks=self.callbacks,
+            callback=self.callback,
+            height=img_h,
+            width=img_w,
+            **_kwargs
         ).images[0]
 
         output = (output * 255).round().astype("uint8")
@@ -209,7 +199,9 @@ class SD(InpaintModel):
 
 class SD14(SD):
     model_id_or_path = "CompVis/stable-diffusion-v1-4"
+    image_key = "init_image"
 
 
 class SD15(SD):
-    model_id_or_path = "CompVis/stable-diffusion-v1-5"
+    model_id_or_path = "runwayml/stable-diffusion-inpainting"
+    image_key = "image"

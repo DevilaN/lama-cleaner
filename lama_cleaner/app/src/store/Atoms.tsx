@@ -9,7 +9,7 @@ export enum AIModel {
   ZITS = 'zits',
   MAT = 'mat',
   FCF = 'fcf',
-  SD14 = 'sd1.4',
+  SD15 = 'sd1.5',
   CV2 = 'cv2',
 }
 
@@ -206,7 +206,7 @@ const defaultHDSettings: ModelsHDSettings = {
     hdStrategyCropMargin: 128,
     enabled: false,
   },
-  [AIModel.SD14]: {
+  [AIModel.SD15]: {
     hdStrategy: HDStrategy.ORIGINAL,
     hdStrategyResizeLimit: 768,
     hdStrategyCropTrigerSize: 512,
@@ -225,6 +225,7 @@ const defaultHDSettings: ModelsHDSettings = {
 export enum SDSampler {
   ddim = 'ddim',
   pndm = 'pndm',
+  klms = 'k_lms',
 }
 
 export enum SDMode {
@@ -253,7 +254,7 @@ export const settingStateDefault: Settings = {
   sdStrength: 0.75,
   sdSteps: 50,
   sdGuidanceScale: 7.5,
-  sdSampler: SDSampler.ddim,
+  sdSampler: SDSampler.pndm,
   sdSeed: 42,
   sdSeedFixed: true,
   sdNumSamples: 1,
@@ -285,7 +286,7 @@ const localStorageEffect =
     )
   }
 
-const ROOT_STATE_KEY = 'settingsState3'
+const ROOT_STATE_KEY = 'settingsState4'
 // Each atom can reference an array of these atom effect functions which are called in priority order when the atom is initialized
 // https://recoiljs.org/docs/guides/atom-effects/#local-storage-persistence
 export const settingState = atom<Settings>({
@@ -328,7 +329,7 @@ export const isSDState = selector({
   key: 'isSD',
   get: ({ get }) => {
     const settings = get(settingState)
-    return settings.model === AIModel.SD14
+    return settings.model === AIModel.SD15
   },
 })
 

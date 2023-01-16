@@ -1,17 +1,23 @@
+import torch
+import gc
+
 from lama_cleaner.model.fcf import FcF
 from lama_cleaner.model.lama import LaMa
 from lama_cleaner.model.ldm import LDM
+from lama_cleaner.model.manga import Manga
 from lama_cleaner.model.mat import MAT
-from lama_cleaner.model.sd import SD14, SD15
+from lama_cleaner.model.paint_by_example import PaintByExample
+from lama_cleaner.model.sd import SD15, SD2
 from lama_cleaner.model.zits import ZITS
 from lama_cleaner.model.opencv2 import OpenCV2
 from lama_cleaner.schema import Config
 
-models = {"lama": LaMa, "ldm": LDM, "zits": ZITS, "mat": MAT, "fcf": FcF, "sd1.5": SD15, "cv2": OpenCV2}
+models = {"lama": LaMa, "ldm": LDM, "zits": ZITS, "mat": MAT, "fcf": FcF, "sd1.5": SD15, "cv2": OpenCV2, "manga": Manga,
+          "sd2": SD2, "paint_by_example": PaintByExample}
 
 
 class ModelManager:
-    def __init__(self, name: str, device, **kwargs):
+    def __init__(self, name: str, device: torch.device, **kwargs):
         self.name = name
         self.device = device
         self.kwargs = kwargs
@@ -37,6 +43,12 @@ class ModelManager:
         if new_name == self.name:
             return
         try:
+            if (torch.cuda.memory_allocated() > 0):
+                # Clear current loaded model from memory
+                torch.cuda.empty_cache()
+                del self.model
+                gc.collect()
+
             self.model = self.init_model(new_name, self.device, **self.kwargs)
             self.name = new_name
         except NotImplementedError as e:

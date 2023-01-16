@@ -1,6 +1,9 @@
 import os
 import imghdr
 import argparse
+from pathlib import Path
+
+from loguru import logger
 
 
 def parse_args():
@@ -10,12 +13,15 @@ def parse_args():
     parser.add_argument(
         "--model",
         default="lama",
-        choices=["lama", "ldm", "zits", "mat", "fcf", "sd1.5", "cv2"],
+        choices=["lama", "ldm", "zits", "mat", "fcf", "sd1.5", "cv2", "manga", "sd2", "paint_by_example"],
     )
+    parser.add_argument("--no-half", action="store_true", help="sd/paint_by_example model no half precision")
+    parser.add_argument("--cpu-offload", action="store_true",
+                        help="sd/paint_by_example model, offloads all models to CPU, significantly reducing vRAM usage.")
     parser.add_argument(
         "--hf_access_token",
         default="",
-        help="Huggingface access token. Check how to get token from: https://huggingface.co/docs/hub/security-tokens",
+        help="SD model no more need token: https://github.com/huggingface/diffusers/issues/1447",
     )
     parser.add_argument(
         "--sd-disable-nsfw",
@@ -30,9 +36,19 @@ def parse_args():
     parser.add_argument(
         "--sd-run-local",
         action="store_true",
-        help="After first time Stable Diffusion model downloaded, you can add this arg and remove --hf_access_token",
+        help="SD model no more need token, use --local-files-only to set not connect to huggingface server",
     )
-    parser.add_argument("--device", default="cuda", type=str, choices=["cuda", "cpu"])
+    parser.add_argument(
+        "--local-files-only",
+        action="store_true",
+        help="sd/paint_by_example model. Use local files only, not connect to huggingface server",
+    )
+    parser.add_argument(
+        "--sd-enable-xformers",
+        action="store_true",
+        help="Enable xFormers optimizations. Requires that xformers package has been installed. See: https://github.com/facebookresearch/xformers"
+    )
+    parser.add_argument("--device", default="cuda", type=str, choices=["cuda", "cpu", "mps"])
     parser.add_argument("--gui", action="store_true", help="Launch as desktop app")
     parser.add_argument(
         "--gui-size",
@@ -42,21 +58,33 @@ def parse_args():
         help="Set window size for GUI",
     )
     parser.add_argument(
-        "--input", type=str, help="Path to image you want to load by default"
+        "--input", type=str,
+        help="If input is image, it will be load by default. If input is directory, all images will be loaded to file manager"
     )
+    parser.add_argument(
+        "--output-dir", type=str,
+        help="Only required when --input is directory. Output directory for all processed images"
+    )
+    parser.add_argument("--disable-model-switch", action="store_true", help="Disable model switch in frontend")
     parser.add_argument("--debug", action="store_true")
 
     args = parser.parse_args()
     if args.input is not None:
         if not os.path.exists(args.input):
             parser.error(f"invalid --input: {args.input} not exists")
-        if imghdr.what(args.input) is None:
-            parser.error(f"invalid --input: {args.input} is not a valid image file")
-
-    if args.model.startswith("sd") and not args.sd_run_local:
-        if not args.hf_access_token.startswith("hf_"):
-            parser.error(
-                f"sd(stable-diffusion) model requires huggingface access token. Check how to get token from: https://huggingface.co/docs/hub/security-tokens"
-            )
+        if os.path.isfile(args.input):
+            if imghdr.what(args.input) is None:
+                parser.error(f"invalid --input: {args.input} is not a valid image file")
+        else:
+            if args.output_dir is None:
+                parser.error(f"invalid --input: {args.input} is a directory, --output-dir is required")
+            else:
+                output_dir = Path(args.output_dir)
+                if not output_dir.exists():
+                    logger.info(f"Creating output directory: {output_dir}")
+                    output_dir.mkdir(parents=True)
+                else:
+                    if not output_dir.is_dir():
+                        parser.error(f"invalid --output-dir: {output_dir} is not a directory")
 
     return args

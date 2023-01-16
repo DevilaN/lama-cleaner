@@ -1,19 +1,49 @@
-import React, { useState } from 'react'
-import { useRecoilState } from 'recoil'
+import React, { FormEvent } from 'react'
+import { useRecoilState, useRecoilValue } from 'recoil'
 import * as PopoverPrimitive from '@radix-ui/react-popover'
 import { useToggle } from 'react-use'
-import { SDSampler, settingState } from '../../store/Atoms'
+import {
+  isInpaintingState,
+  negativePropmtState,
+  propmtState,
+  SDSampler,
+  settingState,
+} from '../../store/Atoms'
 import NumberInputSetting from '../Settings/NumberInputSetting'
 import SettingBlock from '../Settings/SettingBlock'
 import Selector from '../shared/Selector'
 import { Switch, SwitchThumb } from '../shared/Switch'
+import TextAreaInput from '../shared/Textarea'
+import emitter, { EVENT_PROMPT } from '../../event'
+import ImageResizeScale from './ImageResizeScale'
 
 const INPUT_WIDTH = 30
 
-// TODO: 添加收起来的按钮
 const SidePanel = () => {
   const [open, toggleOpen] = useToggle(true)
   const [setting, setSettingState] = useRecoilState(settingState)
+  const [negativePrompt, setNegativePrompt] =
+    useRecoilState(negativePropmtState)
+  const isInpainting = useRecoilValue(isInpaintingState)
+  const prompt = useRecoilValue(propmtState)
+
+  const handleOnInput = (evt: FormEvent<HTMLTextAreaElement>) => {
+    evt.preventDefault()
+    evt.stopPropagation()
+    const target = evt.target as HTMLTextAreaElement
+    setNegativePrompt(target.value)
+  }
+
+  const onKeyUp = (e: React.KeyboardEvent) => {
+    if (
+      e.key === 'Enter' &&
+      (e.ctrlKey || e.metaKey) &&
+      prompt.length !== 0 &&
+      !isInpainting
+    ) {
+      emitter.emit(EVENT_PROMPT)
+    }
+  }
 
   return (
     <div className="side-panel">
@@ -22,7 +52,7 @@ const SidePanel = () => {
           className="btn-primary side-panel-trigger"
           onClick={() => toggleOpen()}
         >
-          Configurations
+          Config
         </PopoverPrimitive.Trigger>
         <PopoverPrimitive.Portal>
           <PopoverPrimitive.Content className="side-panel-content">
@@ -41,6 +71,9 @@ const SidePanel = () => {
                 </Switch>
               }
             />
+
+            <ImageResizeScale />
+
             {/* 
             <NumberInputSetting
               title="Num Samples"
@@ -59,7 +92,7 @@ const SidePanel = () => {
               title="Steps"
               width={INPUT_WIDTH}
               value={`${setting.sdSteps}`}
-              desc="Large steps result in better result, but more time-consuming"
+              desc="The number of denoising steps. More denoising steps usually lead to a higher quality image at the expense of slower inference."
               onValue={value => {
                 const val = value.length === 0 ? 0 : parseInt(value, 10)
                 setSettingState(old => {
@@ -69,26 +102,11 @@ const SidePanel = () => {
             />
 
             <NumberInputSetting
-              title="Strength"
-              width={INPUT_WIDTH}
-              allowFloat
-              value={`${setting.sdStrength}`}
-              desc="TODO"
-              onValue={value => {
-                const val = value.length === 0 ? 0 : parseFloat(value)
-                console.log(val)
-                setSettingState(old => {
-                  return { ...old, sdStrength: val }
-                })
-              }}
-            />
-
-            <NumberInputSetting
               title="Guidance Scale"
               width={INPUT_WIDTH}
               allowFloat
               value={`${setting.sdGuidanceScale}`}
-              desc="TODO"
+              desc="Higher guidance scale encourages to generate images that are closely linked to the text prompt, usually at the expense of lower image quality."
               onValue={value => {
                 const val = value.length === 0 ? 0 : parseFloat(value)
                 setSettingState(old => {
@@ -101,13 +119,30 @@ const SidePanel = () => {
               title="Mask Blur"
               width={INPUT_WIDTH}
               value={`${setting.sdMaskBlur}`}
-              desc="TODO"
+              desc="Blur the edge of mask area. The higher the number the smoother blend with the original image"
               onValue={value => {
                 const val = value.length === 0 ? 0 : parseInt(value, 10)
                 setSettingState(old => {
                   return { ...old, sdMaskBlur: val }
                 })
               }}
+            />
+
+            <SettingBlock
+              title="Match Histograms"
+              desc="Match the inpainting result histogram to the source image histogram, will improves the inpainting quality for some images."
+              input={
+                <Switch
+                  checked={setting.sdMatchHistograms}
+                  onCheckedChange={value => {
+                    setSettingState(old => {
+                      return { ...old, sdMatchHistograms: value }
+                    })
+                  }}
+                >
+                  <SwitchThumb />
+                </Switch>
+              }
             />
 
             <SettingBlock
@@ -165,6 +200,21 @@ const SidePanel = () => {
                     <SwitchThumb />
                   </Switch>
                 </div>
+              }
+            />
+
+            <SettingBlock
+              className="sub-setting-block"
+              title="Negative prompt"
+              layout="v"
+              input={
+                <TextAreaInput
+                  className="negative-prompt"
+                  value={negativePrompt}
+                  onInput={handleOnInput}
+                  onKeyUp={onKeyUp}
+                  placeholder=""
+                />
               }
             />
           </PopoverPrimitive.Content>

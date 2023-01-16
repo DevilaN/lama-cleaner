@@ -18,7 +18,7 @@ export enum LDMSampler {
 
 function HDSettingBlock() {
   const [hdSettings, setHDSettings] = useRecoilState(hdSettingsState)
-  if (!hdSettings.enabled) {
+  if (!hdSettings?.enabled) {
     return <></>
   }
 
@@ -120,7 +120,7 @@ function HDSettingBlock() {
   return (
     <SettingBlock
       className="hd-setting-block"
-      title="High Resolution Strategy"
+      title="Strategy"
       input={
         <Selector
           width={80}

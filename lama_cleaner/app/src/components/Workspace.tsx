@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect } from 'react'
-import { useRecoilState, useRecoilValue } from 'recoil'
+import React, { useEffect } from 'react'
+import { useRecoilState, useRecoilValue, useSetRecoilState } from 'recoil'
 import Editor from './Editor/Editor'
 import ShortcutsModal from './Shortcuts/ShortcutsModal'
 import SettingModal from './Settings/SettingsModal'
@@ -7,22 +7,31 @@ import Toast from './shared/Toast'
 import {
   AIModel,
   fileState,
+  isPaintByExampleState,
   isSDState,
   settingState,
+  showFileManagerState,
   toastState,
 } from '../store/Atoms'
 import {
   currentModel,
+  getMediaFile,
   modelDownloaded,
   switchModel,
 } from '../adapters/inpainting'
 import SidePanel from './SidePanel/SidePanel'
+import PESidePanel from './SidePanel/PESidePanel'
+import FileManager from './FileManager/FileManager'
 
 const Workspace = () => {
-  const [file, setFile] = useRecoilState(fileState)
+  const setFile = useSetRecoilState(fileState)
   const [settings, setSettingState] = useRecoilState(settingState)
   const [toastVal, setToastState] = useRecoilState(toastState)
   const isSD = useRecoilValue(isSDState)
+  const isPaintByExample = useRecoilValue(isPaintByExampleState)
+
+  const [showFileManager, setShowFileManager] =
+    useRecoilState(showFileManagerState)
 
   const onSettingClose = async () => {
     const curModel = await currentModel().then(res => res.text())
@@ -88,6 +97,19 @@ const Workspace = () => {
   return (
     <>
       {isSD ? <SidePanel /> : <></>}
+      {isPaintByExample ? <PESidePanel /> : <></>}
+      <FileManager
+        photoWidth={256}
+        show={showFileManager}
+        onClose={() => {
+          setShowFileManager(false)
+        }}
+        onPhotoClick={async (tab: string, filename: string) => {
+          const newFile = await getMediaFile(tab, filename)
+          setFile(newFile)
+          setShowFileManager(false)
+        }}
+      />
       <Editor />
       <SettingModal onClose={onSettingClose} />
       <ShortcutsModal />

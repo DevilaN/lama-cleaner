@@ -3,6 +3,7 @@ from typing import Optional
 
 import cv2
 import torch
+import numpy as np
 from loguru import logger
 
 from lama_cleaner.helper import boxes_from_mask, resize_max_size, pad_img_to_modulo
@@ -55,9 +56,14 @@ class InpaintModel:
         result = self.forward(pad_image, pad_mask, config)
         result = result[0:origin_height, 0:origin_width, :]
 
-        original_pixel_indices = mask < 127
-        result[original_pixel_indices] = image[:, :, ::-1][original_pixel_indices]
+        result, image, mask = self.forward_post_process(result, image, mask, config)
+
+        mask = mask[:, :, np.newaxis]
+        result = result * (mask / 255) + image[:, :, ::-1] * (1 - (mask / 255))
         return result
+
+    def forward_post_process(self, result, image, mask, config):
+        return result, image, mask
 
     @torch.no_grad()
     def __call__(self, image, mask, config: Config):
@@ -166,6 +172,64 @@ class InpaintModel:
         logger.info(f"box size: ({box_h},{box_w}) crop size: {crop_img.shape}")
 
         return crop_img, crop_mask, [l, t, r, b]
+
+    def _calculate_cdf(self, histogram):
+        cdf = histogram.cumsum()
+        normalized_cdf = cdf / float(cdf.max())
+        return normalized_cdf
+
+    def _calculate_lookup(self, source_cdf, reference_cdf):
+        lookup_table = np.zeros(256)
+        lookup_val = 0
+        for source_index, source_val in enumerate(source_cdf):
+            for reference_index, reference_val in enumerate(reference_cdf):
+                if reference_val >= source_val:
+                    lookup_val = reference_index
+                    break
+            lookup_table[source_index] = lookup_val
+        return lookup_table
+
+    def _match_histograms(self, source, reference, mask):
+        transformed_channels = []
+        for channel in range(source.shape[-1]):
+            source_channel = source[:, :, channel]
+            reference_channel = reference[:, :, channel]
+
+            # only calculate histograms for non-masked parts
+            source_histogram, _ = np.histogram(source_channel[mask == 0], 256, [0, 256])
+            reference_histogram, _ = np.histogram(reference_channel[mask == 0], 256, [0, 256])
+
+            source_cdf = self._calculate_cdf(source_histogram)
+            reference_cdf = self._calculate_cdf(reference_histogram)
+
+            lookup = self._calculate_lookup(source_cdf, reference_cdf)
+
+            transformed_channels.append(cv2.LUT(source_channel, lookup))
+
+        result = cv2.merge(transformed_channels)
+        result = cv2.convertScaleAbs(result)
+
+        return result
+
+    def _apply_cropper(self, image, mask, config: Config):
+        img_h, img_w = image.shape[:2]
+        l, t, w, h = (
+            config.croper_x,
+            config.croper_y,
+            config.croper_width,
+            config.croper_height,
+        )
+        r = l + w
+        b = t + h
+
+        l = max(l, 0)
+        r = min(r, img_w)
+        t = max(t, 0)
+        b = min(b, img_h)
+
+        crop_img = image[t:b, l:r, :]
+        crop_mask = mask[t:b, l:r]
+        return crop_img, crop_mask, (l, t, r, b)
 
     def _run_box(self, image, mask, box, config: Config):
         """

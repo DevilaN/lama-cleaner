@@ -56,6 +56,7 @@ export default function ShortcutsModal() {
         />
         <ShortCut content="Cancel Mask Drawing" keys={['Esc']} />
         <ShortCut content="Run Inpainting Manually" keys={['Shift', 'R']} />
+        <ShortCut content="Interactive Segmentation" keys={['I']} />
         <ShortCut content="Undo Inpainting" keys={[CmdOrCtrl, 'Z']} />
         <ShortCut content="Redo Inpainting" keys={[CmdOrCtrl, 'Shift', 'Z']} />
         <ShortCut content="View Original Image" keys={['Hold Tab']} />
@@ -66,6 +67,7 @@ export default function ShortcutsModal() {
         <ShortCut content="Toggle Dark Mode" keys={['Shift', 'D']} />
         <ShortCut content="Toggle Hotkeys Dialog" keys={['H']} />
         <ShortCut content="Toggle Settings Dialog" keys={['S']} />
+        <ShortCut content="Toggle File Manager" keys={['F']} />
       </div>
     </Modal>
   )

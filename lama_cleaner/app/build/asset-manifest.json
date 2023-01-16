@@ -1,17 +1,15 @@
 {
   "files": {
-    "main.css": "/static/css/main.466cfae4.chunk.css",
-    "main.js": "/static/js/main.10498a27.chunk.js",
-    "runtime-main.js": "/static/js/runtime-main.5e86ac81.js",
-    "static/js/2.f399df96.chunk.js": "/static/js/2.f399df96.chunk.js",
-    "index.html": "/index.html",
-    "static/js/2.f399df96.chunk.js.LICENSE.txt": "/static/js/2.f399df96.chunk.js.LICENSE.txt",
-    "static/media/_index.scss": "/static/media/WorkSans-SemiBold.1e98db4e.ttf"
+    "main.css": "/static/css/main.c28d98ca.css",
+    "main.js": "/static/js/main.1bd455bc.js",
+    "static/media/WorkSans-SemiBold.ttf": "/static/media/WorkSans-SemiBold.1e98db4eb705b586728e.ttf",
+    "static/media/WorkSans-Bold.ttf": "/static/media/WorkSans-Bold.2bea7a7f7d052c74da25.ttf",
+    "static/media/WorkSans-Regular.ttf": "/static/media/WorkSans-Regular.bb287b894b27372d8ea7.ttf",
+    "static/media/WorkSans-Black.ttf": "/static/media/WorkSans-Black.67c2c5a144333953880b.ttf",
+    "index.html": "/index.html"
   },
   "entrypoints": [
-    "static/js/runtime-main.5e86ac81.js",
-    "static/js/2.f399df96.chunk.js",
-    "static/css/main.466cfae4.chunk.css",
-    "static/js/main.10498a27.chunk.js"
+    "static/css/main.c28d98ca.css",
+    "static/js/main.1bd455bc.js"
   ]
 }

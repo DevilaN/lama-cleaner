@@ -10,11 +10,19 @@ export enum AIModel {
   MAT = 'mat',
   FCF = 'fcf',
   SD15 = 'sd1.5',
+  SD2 = 'sd2',
   CV2 = 'cv2',
+  Mange = 'manga',
+  PAINT_BY_EXAMPLE = 'paint_by_example',
 }
 
-export const fileState = atom<File | undefined>({
-  key: 'fileState',
+export const maskState = atom<File | undefined>({
+  key: 'maskState',
+  default: undefined,
+})
+
+export const paintByExampleImageState = atom<File | undefined>({
+  key: 'paintByExampleImageState',
   default: undefined,
 })
 
@@ -26,20 +34,43 @@ export interface Rect {
 }
 
 interface AppState {
+  file: File | undefined
+  imageHeight: number
+  imageWidth: number
   disableShortCuts: boolean
   isInpainting: boolean
+  isDisableModelSwitch: boolean
+  isInteractiveSeg: boolean
+  isInteractiveSegRunning: boolean
+  interactiveSegClicks: number[][]
+  showFileManager: boolean
+  enableFileManager: boolean
 }
 
 export const appState = atom<AppState>({
   key: 'appState',
   default: {
+    file: undefined,
+    imageHeight: 0,
+    imageWidth: 0,
     disableShortCuts: false,
     isInpainting: false,
+    isDisableModelSwitch: false,
+    isInteractiveSeg: false,
+    isInteractiveSegRunning: false,
+    interactiveSegClicks: [],
+    showFileManager: false,
+    enableFileManager: false,
   },
 })
 
 export const propmtState = atom<string>({
   key: 'promptState',
+  default: '',
+})
+
+export const negativePropmtState = atom<string>({
+  key: 'negativePromptState',
   default: '',
 })
 
@@ -52,6 +83,126 @@ export const isInpaintingState = selector({
   set: ({ get, set }, newValue: any) => {
     const app = get(appState)
     set(appState, { ...app, isInpainting: newValue })
+  },
+})
+
+export const imageHeightState = selector({
+  key: 'imageHeightState',
+  get: ({ get }) => {
+    const app = get(appState)
+    return app.imageHeight
+  },
+  set: ({ get, set }, newValue: any) => {
+    const app = get(appState)
+    set(appState, { ...app, imageHeight: newValue })
+  },
+})
+
+export const imageWidthState = selector({
+  key: 'imageWidthState',
+  get: ({ get }) => {
+    const app = get(appState)
+    return app.imageWidth
+  },
+  set: ({ get, set }, newValue: any) => {
+    const app = get(appState)
+    set(appState, { ...app, imageWidth: newValue })
+  },
+})
+
+export const showFileManagerState = selector({
+  key: 'showFileManager',
+  get: ({ get }) => {
+    const app = get(appState)
+    return app.showFileManager
+  },
+  set: ({ get, set }, newValue: any) => {
+    const app = get(appState)
+    set(appState, { ...app, showFileManager: newValue })
+  },
+})
+
+export const enableFileManagerState = selector({
+  key: 'enableFileManagerState',
+  get: ({ get }) => {
+    const app = get(appState)
+    return app.enableFileManager
+  },
+  set: ({ get, set }, newValue: any) => {
+    const app = get(appState)
+    set(appState, { ...app, enableFileManager: newValue })
+  },
+})
+
+export const fileState = selector({
+  key: 'fileState',
+  get: ({ get }) => {
+    const app = get(appState)
+    return app.file
+  },
+  set: ({ get, set }, newValue: any) => {
+    const app = get(appState)
+    set(appState, {
+      ...app,
+      file: newValue,
+      interactiveSegClicks: [],
+      isInteractiveSeg: false,
+      isInteractiveSegRunning: false,
+    })
+
+    const setting = get(settingState)
+    set(settingState, {
+      ...setting,
+      sdScale: 100,
+    })
+  },
+})
+
+export const isInteractiveSegState = selector({
+  key: 'isInteractiveSegState',
+  get: ({ get }) => {
+    const app = get(appState)
+    return app.isInteractiveSeg
+  },
+  set: ({ get, set }, newValue: any) => {
+    const app = get(appState)
+    set(appState, { ...app, isInteractiveSeg: newValue })
+  },
+})
+
+export const isInteractiveSegRunningState = selector({
+  key: 'isInteractiveSegRunningState',
+  get: ({ get }) => {
+    const app = get(appState)
+    return app.isInteractiveSegRunning
+  },
+  set: ({ get, set }, newValue: any) => {
+    const app = get(appState)
+    set(appState, { ...app, isInteractiveSegRunning: newValue })
+  },
+})
+
+export const interactiveSegClicksState = selector({
+  key: 'interactiveSegClicksState',
+  get: ({ get }) => {
+    const app = get(appState)
+    return app.interactiveSegClicks
+  },
+  set: ({ get, set }, newValue: any) => {
+    const app = get(appState)
+    set(appState, { ...app, interactiveSegClicks: newValue })
+  },
+})
+
+export const isDisableModelSwitchState = selector({
+  key: 'isDisableModelSwitchState',
+  get: ({ get }) => {
+    const app = get(appState)
+    return app.isDisableModelSwitch
+  },
+  set: ({ get, set }, newValue: any) => {
+    const app = get(appState)
+    set(appState, { ...app, isDisableModelSwitch: newValue })
   },
 })
 
@@ -164,18 +315,28 @@ export interface Settings {
   sdSeed: number
   sdSeedFixed: boolean // true: use sdSeed, false: random generate seed on backend
   sdNumSamples: number
+  sdMatchHistograms: boolean
+  sdScale: number
 
   // For OpenCV2
   cv2Radius: number
   cv2Flag: CV2Flag
+
+  // Paint by Example
+  paintByExampleSteps: number
+  paintByExampleGuidanceScale: number
+  paintByExampleSeed: number
+  paintByExampleSeedFixed: boolean
+  paintByExampleMaskBlur: number
+  paintByExampleMatchHistograms: boolean
 }
 
 const defaultHDSettings: ModelsHDSettings = {
   [AIModel.LAMA]: {
-    hdStrategy: HDStrategy.RESIZE,
+    hdStrategy: HDStrategy.CROP,
     hdStrategyResizeLimit: 2048,
-    hdStrategyCropTrigerSize: 2048,
-    hdStrategyCropMargin: 128,
+    hdStrategyCropTrigerSize: 1280,
+    hdStrategyCropMargin: 196,
     enabled: true,
   },
   [AIModel.LDM]: {
@@ -211,6 +372,27 @@ const defaultHDSettings: ModelsHDSettings = {
     hdStrategyResizeLimit: 768,
     hdStrategyCropTrigerSize: 512,
     hdStrategyCropMargin: 128,
+    enabled: false,
+  },
+  [AIModel.SD2]: {
+    hdStrategy: HDStrategy.ORIGINAL,
+    hdStrategyResizeLimit: 768,
+    hdStrategyCropTrigerSize: 512,
+    hdStrategyCropMargin: 128,
+    enabled: false,
+  },
+  [AIModel.PAINT_BY_EXAMPLE]: {
+    hdStrategy: HDStrategy.ORIGINAL,
+    hdStrategyResizeLimit: 768,
+    hdStrategyCropTrigerSize: 512,
+    hdStrategyCropMargin: 128,
+    enabled: false,
+  },
+  [AIModel.Mange]: {
+    hdStrategy: HDStrategy.CROP,
+    hdStrategyResizeLimit: 1280,
+    hdStrategyCropTrigerSize: 1024,
+    hdStrategyCropMargin: 196,
     enabled: true,
   },
   [AIModel.CV2]: {
@@ -226,6 +408,9 @@ export enum SDSampler {
   ddim = 'ddim',
   pndm = 'pndm',
   klms = 'k_lms',
+  kEuler = 'k_euler',
+  kEulerA = 'k_euler_a',
+  dpmPlusPlus = 'dpm++',
 }
 
 export enum SDMode {
@@ -258,10 +443,20 @@ export const settingStateDefault: Settings = {
   sdSeed: 42,
   sdSeedFixed: true,
   sdNumSamples: 1,
+  sdMatchHistograms: false,
+  sdScale: 100,
 
   // CV2
   cv2Radius: 5,
   cv2Flag: CV2Flag.INPAINT_NS,
+
+  // Paint by Example
+  paintByExampleSteps: 50,
+  paintByExampleGuidanceScale: 7.5,
+  paintByExampleSeed: 42,
+  paintByExampleMaskBlur: 5,
+  paintByExampleSeedFixed: false,
+  paintByExampleMatchHistograms: false,
 }
 
 const localStorageEffect =
@@ -299,11 +494,28 @@ export const seedState = selector({
   key: 'seed',
   get: ({ get }) => {
     const settings = get(settingState)
-    return settings.sdSeed
+    switch (settings.model) {
+      case AIModel.PAINT_BY_EXAMPLE:
+        return settings.paintByExampleSeedFixed
+          ? settings.paintByExampleSeed
+          : -1
+      default:
+        return settings.sdSeedFixed ? settings.sdSeed : -1
+    }
   },
   set: ({ get, set }, newValue: any) => {
     const settings = get(settingState)
-    set(settingState, { ...settings, sdSeed: newValue })
+    switch (settings.model) {
+      case AIModel.PAINT_BY_EXAMPLE:
+        if (!settings.paintByExampleSeedFixed) {
+          set(settingState, { ...settings, paintByExampleSeed: newValue })
+        }
+        break
+      default:
+        if (!settings.sdSeedFixed) {
+          set(settingState, { ...settings, sdSeed: newValue })
+        }
+    }
   },
 })
 
@@ -329,7 +541,15 @@ export const isSDState = selector({
   key: 'isSD',
   get: ({ get }) => {
     const settings = get(settingState)
-    return settings.model === AIModel.SD15
+    return settings.model === AIModel.SD15 || settings.model === AIModel.SD2
+  },
+})
+
+export const isPaintByExampleState = selector({
+  key: 'isPaintByExampleState',
+  get: ({ get }) => {
+    const settings = get(settingState)
+    return settings.model === AIModel.PAINT_BY_EXAMPLE
   },
 })
 
@@ -338,6 +558,7 @@ export const runManuallyState = selector({
   get: ({ get }) => {
     const settings = get(settingState)
     const isSD = get(isSDState)
-    return settings.runInpaintingManually || isSD
+    const isPaintByExample = get(isPaintByExampleState)
+    return settings.runInpaintingManually || isSD || isPaintByExample
   },
 })

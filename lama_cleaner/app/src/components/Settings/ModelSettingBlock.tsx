@@ -1,6 +1,13 @@
-import React, { ReactNode } from 'react'
-import { useRecoilState } from 'recoil'
-import { AIModel, CV2Flag, SDSampler, settingState } from '../../store/Atoms'
+import React, { ReactNode, useEffect, useState } from 'react'
+import { useRecoilState, useRecoilValue } from 'recoil'
+import { getIsDisableModelSwitch } from '../../adapters/inpainting'
+import {
+  AIModel,
+  CV2Flag,
+  isDisableModelSwitchState,
+  SDSampler,
+  settingState,
+} from '../../store/Atoms'
 import Selector from '../shared/Selector'
 import { Switch, SwitchThumb } from '../shared/Switch'
 import Tooltip from '../shared/Tooltip'
@@ -10,6 +17,7 @@ import SettingBlock from './SettingBlock'
 
 function ModelSettingBlock() {
   const [setting, setSettingState] = useRecoilState(settingState)
+  const isDisableModelSwitch = useRecoilValue(isDisableModelSwitchState)
 
   const onModelChange = (value: AIModel) => {
     setSettingState(old => {
@@ -183,6 +191,12 @@ function ModelSettingBlock() {
         return renderFCFModelDesc()
       case AIModel.SD15:
         return undefined
+      case AIModel.SD2:
+        return undefined
+      case AIModel.PAINT_BY_EXAMPLE:
+        return undefined
+      case AIModel.Mange:
+        return undefined
       case AIModel.CV2:
         return renderOpenCV2Desc()
       default:
@@ -224,15 +238,33 @@ function ModelSettingBlock() {
         )
       case AIModel.SD15:
         return renderModelDesc(
-          'Stable Diffusion',
+          'Stable Diffusion 1.5',
           'https://ommer-lab.com/research/latent-diffusion-models/',
           'https://github.com/CompVis/stable-diffusion'
+        )
+      case AIModel.SD2:
+        return renderModelDesc(
+          'Stable Diffusion 2',
+          'https://ommer-lab.com/research/latent-diffusion-models/',
+          'https://github.com/Stability-AI/stablediffusion'
+        )
+      case AIModel.Mange:
+        return renderModelDesc(
+          'Manga Inpainting',
+          'https://www.cse.cuhk.edu.hk/~ttwong/papers/mangainpaint/mangainpaint.html',
+          'https://github.com/msxie92/MangaInpainting'
         )
       case AIModel.CV2:
         return renderModelDesc(
           'OpenCV Image Inpainting',
           'https://docs.opencv.org/4.6.0/df/d3d/tutorial_py_inpainting.html',
           'https://docs.opencv.org/4.6.0/df/d3d/tutorial_py_inpainting.html'
+        )
+      case AIModel.PAINT_BY_EXAMPLE:
+        return renderModelDesc(
+          'Paint by Example',
+          'https://arxiv.org/abs/2211.13227',
+          'https://github.com/Fantasy-Studio/Paint-by-Example'
         )
       default:
         return <></>
@@ -246,10 +278,10 @@ function ModelSettingBlock() {
       titleSuffix={renderPaperCodeBadge()}
       input={
         <Selector
-          width={80}
           value={setting.model as string}
           options={Object.values(AIModel)}
           onChange={val => onModelChange(val as AIModel)}
+          disabled={isDisableModelSwitch}
         />
       }
       optionDesc={renderOptionDesc()}

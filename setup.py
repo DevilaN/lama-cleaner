@@ -21,7 +21,7 @@ def load_requirements():
 # https://setuptools.readthedocs.io/en/latest/setuptools.html#including-data-files
 setuptools.setup(
     name="lama-cleaner",
-    version="0.24.2",
+    version="0.31.1",
     author="PanicByte",
     author_email="cwq1913@gmail.com",
     description="Image inpainting tool powered by SOTA AI Model",
@@ -31,11 +31,15 @@ setuptools.setup(
     packages=setuptools.find_packages("./"),
     package_data={"lama_cleaner": web_files},
     install_requires=load_requirements(),
-    python_requires=">=3.6",
+    python_requires=">=3.7",
     entry_points={"console_scripts": ["lama-cleaner=lama_cleaner:entry_point"]},
     classifiers=[
-        "Programming Language :: Python :: 3",
-        "License :: OSI Approved :: MIT License",
+        "License :: OSI Approved :: Apache Software License",
         "Operating System :: OS Independent",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Topic :: Scientific/Engineering :: Artificial Intelligence",
     ],
 )

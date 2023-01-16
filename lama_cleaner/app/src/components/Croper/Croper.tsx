@@ -1,4 +1,3 @@
-import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/outline'
 import React, { useEffect, useState } from 'react'
 import { useRecoilState, useRecoilValue } from 'recoil'
 import {
@@ -31,10 +30,44 @@ interface Props {
   scale: number
   minHeight: number
   minWidth: number
+  show: boolean
+}
+
+const clamp = (
+  newPos: number,
+  newLength: number,
+  oldPos: number,
+  oldLength: number,
+  minLength: number,
+  maxLength: number
+) => {
+  if (newPos !== oldPos && newLength === oldLength) {
+    if (newPos < 0) {
+      return [0, oldLength]
+    }
+    if (newPos + newLength > maxLength) {
+      return [maxLength - oldLength, oldLength]
+    }
+  } else {
+    if (newLength < minLength) {
+      if (newPos === oldPos) {
+        return [newPos, minLength]
+      }
+      return [newPos + newLength - minLength, minLength]
+    }
+    if (newPos < 0) {
+      return [0, newPos + newLength]
+    }
+    if (newPos + newLength > maxLength) {
+      return [newPos, maxLength - newPos]
+    }
+  }
+
+  return [newPos, newLength]
 }
 
 const Croper = (props: Props) => {
-  const { minHeight, minWidth, maxHeight, maxWidth, scale } = props
+  const { minHeight, minWidth, maxHeight, maxWidth, scale, show } = props
   const [x, setX] = useRecoilState(croperX)
   const [y, setY] = useRecoilState(croperY)
   const [height, setHeight] = useRecoilState(croperHeight)
@@ -47,7 +80,7 @@ const Croper = (props: Props) => {
   useEffect(() => {
     setX(Math.round((maxWidth - 512) / 2))
     setY(Math.round((maxHeight - 512) / 2))
-  }, [maxHeight, maxWidth, minHeight, minWidth])
+  }, [maxHeight, maxWidth])
 
   const [evData, setEVData] = useState<EVData>({
     initX: 0,
@@ -63,18 +96,12 @@ const Croper = (props: Props) => {
     console.log('focus')
   }
 
-  const checkTopBottomLimit = (newY: number, newHeight: number) => {
-    if (newY > 0 && newHeight > minHeight && newY + newHeight <= maxHeight) {
-      return true
-    }
-    return false
+  const clampLeftRight = (newX: number, newWidth: number) => {
+    return clamp(newX, newWidth, x, width, minWidth, maxWidth)
   }
 
-  const checkLeftRightLimit = (newX: number, newWidth: number) => {
-    if (newX > 0 && newWidth > minWidth && newX + newWidth <= maxWidth) {
-      return true
-    }
-    return false
+  const clampTopBottom = (newY: number, newHeight: number) => {
+    return clamp(newY, newHeight, y, height, minHeight, maxHeight)
   }
 
   const onPointerMove = (e: PointerEvent) => {
@@ -90,33 +117,31 @@ const Croper = (props: Props) => {
     const moveTop = () => {
       const newHeight = evData.initHeight - offsetY
       const newY = evData.initY + offsetY
-      if (checkTopBottomLimit(newY, newHeight)) {
-        setHeight(newHeight)
-        setY(newY)
-      }
+      const [clampedY, clampedHeight] = clampTopBottom(newY, newHeight)
+      setHeight(clampedHeight)
+      setY(clampedY)
     }
 
     const moveBottom = () => {
       const newHeight = evData.initHeight + offsetY
-      if (checkTopBottomLimit(evData.initY, newHeight)) {
-        setHeight(newHeight)
-      }
+      const [clampedY, clampedHeight] = clampTopBottom(evData.initY, newHeight)
+      setHeight(clampedHeight)
+      setY(clampedY)
     }
 
     const moveLeft = () => {
       const newWidth = evData.initWidth - offsetX
       const newX = evData.initX + offsetX
-      if (checkLeftRightLimit(newX, newWidth)) {
-        setWidth(newWidth)
-        setX(newX)
-      }
+      const [clampedX, clampedWidth] = clampLeftRight(newX, newWidth)
+      setWidth(clampedWidth)
+      setX(clampedX)
     }
 
     const moveRight = () => {
       const newWidth = evData.initWidth + offsetX
-      if (checkLeftRightLimit(evData.initX, newWidth)) {
-        setWidth(newWidth)
-      }
+      const [clampedX, clampedWidth] = clampLeftRight(evData.initX, newWidth)
+      setWidth(clampedWidth)
+      setX(clampedX)
     }
 
     if (isResizing) {
@@ -166,13 +191,12 @@ const Croper = (props: Props) => {
     if (isMoving) {
       const newX = evData.initX + offsetX
       const newY = evData.initY + offsetY
-      if (
-        checkLeftRightLimit(newX, evData.initWidth) &&
-        checkTopBottomLimit(newY, evData.initHeight)
-      ) {
-        setX(newX)
-        setY(newY)
-      }
+      const [clampedX, clampedWidth] = clampLeftRight(newX, evData.initWidth)
+      const [clampedY, clampedHeight] = clampTopBottom(newY, evData.initHeight)
+      setWidth(clampedWidth)
+      setHeight(clampedHeight)
+      setX(clampedX)
+      setY(clampedY)
     }
   }
 
@@ -368,7 +392,10 @@ const Croper = (props: Props) => {
   }
 
   return (
-    <div className="croper-wrapper">
+    <div
+      className="croper-wrapper"
+      style={{ visibility: show ? 'visible' : 'hidden' }}
+    >
       <div className="croper" style={{ height, width, left: x, top: y }}>
         {createBorder()}
         {createInfoBar()}

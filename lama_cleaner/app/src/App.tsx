@@ -1,14 +1,23 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { useRecoilState } from 'recoil'
+import React, { useCallback, useEffect, useMemo } from 'react'
+import { useRecoilState, useSetRecoilState } from 'recoil'
 import { nanoid } from 'nanoid'
 import useInputImage from './hooks/useInputImage'
-import LandingPage from './components/LandingPage/LandingPage'
 import { themeState } from './components/Header/ThemeChanger'
 import Workspace from './components/Workspace'
-import { fileState, toastState } from './store/Atoms'
+import {
+  enableFileManagerState,
+  fileState,
+  isDisableModelSwitchState,
+  toastState,
+} from './store/Atoms'
 import { keepGUIAlive } from './utils'
 import Header from './components/Header/Header'
 import useHotKey from './hooks/useHotkey'
+import {
+  getEnableFileManager,
+  getIsDisableModelSwitch,
+  isDesktop,
+} from './adapters/inpainting'
 
 const SUPPORTED_FILE_TYPE = [
   'image/jpeg',
@@ -18,21 +27,46 @@ const SUPPORTED_FILE_TYPE = [
   'image/tiff',
 ]
 
-// Keeping GUI Window Open
-keepGUIAlive()
-
 function App() {
   const [file, setFile] = useRecoilState(fileState)
   const [theme, setTheme] = useRecoilState(themeState)
-  const [toastVal, setToastState] = useRecoilState(toastState)
+  const setToastState = useSetRecoilState(toastState)
   const userInputImage = useInputImage()
-  const [openPasteImageAlertDialog, setOpenPasteImageAlertDialog] =
-    useState(false)
+  const setIsDisableModelSwitch = useSetRecoilState(isDisableModelSwitchState)
+  const setEnableFileManager = useSetRecoilState(enableFileManagerState)
 
   // Set Input Image
   useEffect(() => {
     setFile(userInputImage)
   }, [userInputImage, setFile])
+
+  // Keeping GUI Window Open
+  useEffect(() => {
+    const fetchData = async () => {
+      const isRunDesktop = await isDesktop().then(res => res.text())
+      if (isRunDesktop === 'True') {
+        keepGUIAlive()
+      }
+    }
+    fetchData()
+  }, [])
+
+  useEffect(() => {
+    const fetchData = async () => {
+      const isDisable: string = await getIsDisableModelSwitch().then(res =>
+        res.text()
+      )
+      setIsDisableModelSwitch(isDisable === 'true')
+    }
+
+    fetchData()
+
+    const fetchData2 = async () => {
+      const isEnabled = await getEnableFileManager().then(res => res.text())
+      setEnableFileManager(isEnabled === 'true')
+    }
+    fetchData2()
+  }, [setEnableFileManager, setIsDisableModelSwitch])
 
   // Dark Mode Hotkey
   useHotKey(
@@ -80,35 +114,38 @@ function App() {
     setIsDragging(false)
   }, [])
 
-  const handleDrop = React.useCallback(event => {
-    event.preventDefault()
-    event.stopPropagation()
-    setIsDragging(false)
-    if (event.dataTransfer.files && event.dataTransfer.files.length > 0) {
-      if (event.dataTransfer.files.length > 1) {
-        setToastState({
-          open: true,
-          desc: 'Please drag and drop only one file',
-          state: 'error',
-          duration: 3000,
-        })
-      } else {
-        const dragFile = event.dataTransfer.files[0]
-        const fileType = dragFile.type
-        if (SUPPORTED_FILE_TYPE.includes(fileType)) {
-          setFile(dragFile)
-        } else {
+  const handleDrop = React.useCallback(
+    event => {
+      event.preventDefault()
+      event.stopPropagation()
+      setIsDragging(false)
+      if (event.dataTransfer.files && event.dataTransfer.files.length > 0) {
+        if (event.dataTransfer.files.length > 1) {
           setToastState({
             open: true,
-            desc: 'Please drag and drop an image file',
+            desc: 'Please drag and drop only one file',
             state: 'error',
             duration: 3000,
           })
+        } else {
+          const dragFile = event.dataTransfer.files[0]
+          const fileType = dragFile.type
+          if (SUPPORTED_FILE_TYPE.includes(fileType)) {
+            setFile(dragFile)
+          } else {
+            setToastState({
+              open: true,
+              desc: 'Please drag and drop an image file',
+              state: 'error',
+              duration: 3000,
+            })
+          }
         }
+        event.dataTransfer.clearData()
       }
-      event.dataTransfer.clearData()
-    }
-  }, [])
+    },
+    [setToastState, setFile]
+  )
 
   const onPaste = useCallback((event: any) => {
     // TODO: when sd side panel open, ctrl+v not work

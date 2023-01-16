@@ -4,80 +4,92 @@ import PIL.Image
 import cv2
 import numpy as np
 import torch
-from diffusers import PNDMScheduler, DDIMScheduler, LMSDiscreteScheduler
+from diffusers import PNDMScheduler, DDIMScheduler, LMSDiscreteScheduler, EulerDiscreteScheduler, \
+    EulerAncestralDiscreteScheduler, DPMSolverMultistepScheduler
 from loguru import logger
 
+from lama_cleaner.helper import resize_max_size
 from lama_cleaner.model.base import InpaintModel
+from lama_cleaner.model.utils import torch_gc
 from lama_cleaner.schema import Config, SDSampler
 
 
-#
-#
-# def preprocess_image(image):
-#     w, h = image.size
-#     w, h = map(lambda x: x - x % 32, (w, h))  # resize to integer multiple of 32
-#     image = image.resize((w, h), resample=PIL.Image.LANCZOS)
-#     image = np.array(image).astype(np.float32) / 255.0
-#     image = image[None].transpose(0, 3, 1, 2)
-#     image = torch.from_numpy(image)
-#     # [-1, 1]
-#     return 2.0 * image - 1.0
-#
-#
-# def preprocess_mask(mask):
-#     mask = mask.convert("L")
-#     w, h = mask.size
-#     w, h = map(lambda x: x - x % 32, (w, h))  # resize to integer multiple of 32
-#     mask = mask.resize((w // 8, h // 8), resample=PIL.Image.NEAREST)
-#     mask = np.array(mask).astype(np.float32) / 255.0
-#     mask = np.tile(mask, (4, 1, 1))
-#     mask = mask[None].transpose(0, 1, 2, 3)  # what does this step do?
-#     mask = 1 - mask  # repaint white, keep black
-#     mask = torch.from_numpy(mask)
-#     return mask
-
 class CPUTextEncoderWrapper:
-    def __init__(self, text_encoder):
+    def __init__(self, text_encoder, torch_dtype):
+        self.config = text_encoder.config
         self.text_encoder = text_encoder.to(torch.device('cpu'), non_blocking=True)
         self.text_encoder = self.text_encoder.to(torch.float32, non_blocking=True)
+        self.torch_dtype = torch_dtype
+        del text_encoder
+        torch_gc()
 
-    def __call__(self, x):
+    def __call__(self, x, **kwargs):
         input_device = x.device
-        return [self.text_encoder(x.to(self.text_encoder.device))[0].to(input_device)]
+        return [self.text_encoder(x.to(self.text_encoder.device), **kwargs)[0].to(input_device).to(self.torch_dtype)]
 
 
 class SD(InpaintModel):
-    pad_mod = 8  # current diffusers only support 64 https://github.com/huggingface/diffusers/pull/505
+    pad_mod = 8
     min_size = 512
 
     def init_model(self, device: torch.device, **kwargs):
         from diffusers.pipelines.stable_diffusion import StableDiffusionInpaintPipeline
+        fp16 = not kwargs.get('no_half', False)
 
-        model_kwargs = {"local_files_only": kwargs['sd_run_local']}
+        model_kwargs = {"local_files_only": kwargs.get('local_files_only', kwargs['sd_run_local'])}
         if kwargs['sd_disable_nsfw']:
             logger.info("Disable Stable Diffusion Model NSFW checker")
             model_kwargs.update(dict(
                 safety_checker=None,
             ))
 
+        use_gpu = device == torch.device('cuda') and torch.cuda.is_available()
+        torch_dtype = torch.float16 if use_gpu and fp16 else torch.float32
         self.model = StableDiffusionInpaintPipeline.from_pretrained(
             self.model_id_or_path,
-            revision="fp16" if torch.cuda.is_available() else "main",
-            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+            revision="fp16" if use_gpu and fp16 else "main",
+            torch_dtype=torch_dtype,
             use_auth_token=kwargs["hf_access_token"],
             **model_kwargs
         )
-        # https://huggingface.co/docs/diffusers/v0.3.0/en/api/pipelines/stable_diffusion#diffusers.StableDiffusionInpaintPipeline.enable_attention_slicing
-        self.model.enable_attention_slicing()
         self.model = self.model.to(device)
 
-        if kwargs['sd_cpu_textencoder']:
-            logger.info("Run Stable Diffusion TextEncoder on CPU")
-            self.model.text_encoder = CPUTextEncoderWrapper(self.model.text_encoder)
+        # https://huggingface.co/docs/diffusers/v0.7.0/en/api/pipelines/stable_diffusion#diffusers.StableDiffusionInpaintPipeline.enable_attention_slicing
+        self.model.enable_attention_slicing()
+        # https://huggingface.co/docs/diffusers/v0.7.0/en/optimization/fp16#memory-efficient-attention
+        if kwargs.get('sd_enable_xformers', False):
+            self.model.enable_xformers_memory_efficient_attention()
+
+        if kwargs.get('cpu_offload', False) and torch.cuda.is_available():
+            # TODO: gpu_id
+            logger.info("Enable sequential cpu offload")
+            self.model.enable_sequential_cpu_offload(gpu_id=0)
+        else:
+            if kwargs['sd_cpu_textencoder']:
+                logger.info("Run Stable Diffusion TextEncoder on CPU")
+                self.model.text_encoder = CPUTextEncoderWrapper(self.model.text_encoder, torch_dtype)
 
         self.callback = kwargs.pop("callback", None)
 
-    @torch.cuda.amp.autocast()
+    def _scaled_pad_forward(self, image, mask, config: Config):
+        longer_side_length = int(config.sd_scale * max(image.shape[:2]))
+        origin_size = image.shape[:2]
+        downsize_image = resize_max_size(image, size_limit=longer_side_length)
+        downsize_mask = resize_max_size(mask, size_limit=longer_side_length)
+        logger.info(
+            f"Resize image to do sd inpainting: {image.shape} -> {downsize_image.shape}"
+        )
+        inpaint_result = self._pad_forward(downsize_image, downsize_mask, config)
+        # only paste masked area result
+        inpaint_result = cv2.resize(
+            inpaint_result,
+            (origin_size[1], origin_size[0]),
+            interpolation=cv2.INTER_CUBIC,
+        )
+        original_pixel_indices = mask < 127
+        inpaint_result[original_pixel_indices] = image[:, :, ::-1][original_pixel_indices]
+        return inpaint_result
+
     def forward(self, image, mask, config: Config):
         """Input image and output image have same size
         image: [H, W, C] RGB
@@ -85,36 +97,20 @@ class SD(InpaintModel):
         return: BGR IMAGE
         """
 
-        # image = norm_img(image)  # [0, 1]
-        # image = image * 2 - 1  # [0, 1] -> [-1, 1]
-
-        # resize to latent feature map size
-        # h, w = mask.shape[:2]
-        # mask = cv2.resize(mask, (h // 8, w // 8), interpolation=cv2.INTER_AREA)
-        # mask = norm_img(mask)
-        #
-        # image = torch.from_numpy(image).unsqueeze(0).to(self.device)
-        # mask = torch.from_numpy(mask).unsqueeze(0).to(self.device)
+        scheduler_config = self.model.scheduler.config
 
         if config.sd_sampler == SDSampler.ddim:
-            scheduler = DDIMScheduler(
-                beta_start=0.00085,
-                beta_end=0.012,
-                beta_schedule="scaled_linear",
-                clip_sample=False,
-                set_alpha_to_one=False,
-            )
+            scheduler = DDIMScheduler.from_config(scheduler_config)
         elif config.sd_sampler == SDSampler.pndm:
-            PNDM_kwargs = {
-                "beta_schedule": "scaled_linear",
-                "beta_start": 0.00085,
-                "beta_end": 0.012,
-                "num_train_timesteps": 1000,
-                "skip_prk_steps": True,
-            }
-            scheduler = PNDMScheduler(**PNDM_kwargs)
+            scheduler = PNDMScheduler.from_config(scheduler_config)
         elif config.sd_sampler == SDSampler.k_lms:
-            scheduler = LMSDiscreteScheduler(beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear")
+            scheduler = LMSDiscreteScheduler.from_config(scheduler_config)
+        elif config.sd_sampler == SDSampler.k_euler:
+            scheduler = EulerDiscreteScheduler.from_config(scheduler_config)
+        elif config.sd_sampler == SDSampler.k_euler_a:
+            scheduler = EulerAncestralDiscreteScheduler.from_config(scheduler_config)
+        elif config.sd_sampler == SDSampler.dpm_plus_plus:
+            scheduler = DPMSolverMultistepScheduler.from_config(scheduler_config)
         else:
             raise ValueError(config.sd_sampler)
 
@@ -130,23 +126,19 @@ class SD(InpaintModel):
             k = 2 * config.sd_mask_blur + 1
             mask = cv2.GaussianBlur(mask, (k, k), 0)[:, :, np.newaxis]
 
-        _kwargs = {
-            self.image_key: PIL.Image.fromarray(image),
-        }
-
         img_h, img_w = image.shape[:2]
 
         output = self.model(
+            image=PIL.Image.fromarray(image),
             prompt=config.prompt,
+            negative_prompt=config.negative_prompt,
             mask_image=PIL.Image.fromarray(mask[:, :, -1], mode="L"),
-            strength=config.sd_strength,
             num_inference_steps=config.sd_steps,
             guidance_scale=config.sd_guidance_scale,
             output_type="np.array",
             callback=self.callback,
             height=img_h,
             width=img_w,
-            **_kwargs
         ).images[0]
 
         output = (output * 255).round().astype("uint8")
@@ -160,36 +152,25 @@ class SD(InpaintModel):
         masks: [H, W]
         return: BGR IMAGE
         """
-        img_h, img_w = image.shape[:2]
-
         # boxes = boxes_from_mask(mask)
         if config.use_croper:
-            logger.info("use croper")
-            l, t, w, h = (
-                config.croper_x,
-                config.croper_y,
-                config.croper_width,
-                config.croper_height,
-            )
-            r = l + w
-            b = t + h
-
-            l = max(l, 0)
-            r = min(r, img_w)
-            t = max(t, 0)
-            b = min(b, img_h)
-
-            crop_img = image[t:b, l:r, :]
-            crop_mask = mask[t:b, l:r]
-
-            crop_image = self._pad_forward(crop_img, crop_mask, config)
-
+            crop_img, crop_mask, (l, t, r, b) = self._apply_cropper(image, mask, config)
+            crop_image = self._scaled_pad_forward(crop_img, crop_mask, config)
             inpaint_result = image[:, :, ::-1]
             inpaint_result[t:b, l:r, :] = crop_image
         else:
-            inpaint_result = self._pad_forward(image, mask, config)
+            inpaint_result = self._scaled_pad_forward(image, mask, config)
 
         return inpaint_result
+
+    def forward_post_process(self, result, image, mask, config):
+        if config.sd_match_histograms:
+            result = self._match_histograms(result, image[:, :, ::-1], mask)
+
+        if config.sd_mask_blur != 0:
+            k = 2 * config.sd_mask_blur + 1
+            mask = cv2.GaussianBlur(mask, (k, k), 0)
+        return result, image, mask
 
     @staticmethod
     def is_downloaded() -> bool:
@@ -197,11 +178,9 @@ class SD(InpaintModel):
         return True
 
 
-class SD14(SD):
-    model_id_or_path = "CompVis/stable-diffusion-v1-4"
-    image_key = "init_image"
-
-
 class SD15(SD):
     model_id_or_path = "runwayml/stable-diffusion-inpainting"
-    image_key = "image"
+
+
+class SD2(SD):
+    model_id_or_path = "stabilityai/stable-diffusion-2-inpainting"

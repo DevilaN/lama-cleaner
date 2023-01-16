@@ -1,5 +1,4 @@
 import React, { FocusEvent, InputHTMLAttributes, RefObject } from 'react'
-import { useClickAway } from 'react-use'
 import { useRecoilState } from 'recoil'
 import { appState } from '../../store/Atoms'
 

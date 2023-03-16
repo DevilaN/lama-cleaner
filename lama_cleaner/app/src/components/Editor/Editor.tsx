@@ -20,7 +20,6 @@ import { useRecoilState, useRecoilValue, useSetRecoilState } from 'recoil'
 import { useWindowSize, useKey, useKeyPressEvent } from 'react-use'
 import inpaint, {
   downloadToOutput,
-  makeGif,
   postInteractiveSeg,
 } from '../../adapters/inpainting'
 import Button from '../shared/Button'
@@ -38,6 +37,7 @@ import {
 } from '../../utils'
 import {
   appState,
+  brushSizeState,
   croperState,
   enableFileManagerState,
   fileState,
@@ -45,12 +45,11 @@ import {
   imageWidthState,
   interactiveSegClicksState,
   isDiffusionModelsState,
+  isEnableAutoSavingState,
   isInpaintingState,
   isInteractiveSegRunningState,
   isInteractiveSegState,
-  isPaintByExampleState,
   isPix2PixState,
-  isSDState,
   negativePropmtState,
   propmtState,
   runManuallyState,
@@ -64,6 +63,7 @@ import emitter, {
   EVENT_PROMPT,
   EVENT_CUSTOM_MASK,
   EVENT_PAINT_BY_EXAMPLE,
+  RERUN_LAST_MASK,
 } from '../../event'
 import FileSelect from '../FileSelect/FileSelect'
 import InteractiveSeg from '../InteractiveSeg/InteractiveSeg'
@@ -140,7 +140,8 @@ export default function Editor() {
 
   const [clicks, setClicks] = useRecoilState(interactiveSegClicksState)
 
-  const [brushSize, setBrushSize] = useState(40)
+  const [brushSize, setBrushSize] = useRecoilState(brushSizeState)
+
   const [original, isOriginalLoaded] = useImage(file)
   const [renders, setRenders] = useState<HTMLImageElement[]>([])
   const [context, setContext] = useState<CanvasRenderingContext2D>()
@@ -184,6 +185,7 @@ export default function Editor() {
   const [redoCurLines, setRedoCurLines] = useState<Line[]>([])
   const [redoLineGroups, setRedoLineGroups] = useState<LineGroup[]>([])
   const enableFileManager = useRecoilValue(enableFileManagerState)
+  const isEnableAutoSaving = useRecoilValue(isEnableAutoSavingState)
 
   const setImageWidth = useSetRecoilState(imageWidthState)
   const setImageHeight = useSetRecoilState(imageHeightState)
@@ -511,6 +513,28 @@ export default function Editor() {
 
     return () => {
       emitter.off(EVENT_PAINT_BY_EXAMPLE)
+    }
+  }, [runInpainting])
+
+  useEffect(() => {
+    emitter.on(RERUN_LAST_MASK, () => {
+      if (lastLineGroup.length !== 0) {
+        // 使用上一次手绘的 mask 生成
+        runInpainting(true, undefined, prevInteractiveSegMask)
+      } else if (prevInteractiveSegMask) {
+        // 使用上一次 IS 的 mask 生成
+        runInpainting(false, undefined, prevInteractiveSegMask)
+      } else {
+        setToastState({
+          open: true,
+          desc: 'No mask to reuse',
+          state: 'error',
+          duration: 1500,
+        })
+      }
+    })
+    return () => {
+      emitter.off(RERUN_LAST_MASK)
     }
   }, [runInpainting])
 
@@ -1101,7 +1125,7 @@ export default function Editor() {
     if (file === undefined) {
       return
     }
-    if (enableFileManager && renders.length > 0) {
+    if ((enableFileManager || isEnableAutoSaving) && renders.length > 0) {
       try {
         downloadToOutput(renders[renders.length - 1], file.name, file.type)
         setToastState({
@@ -1177,7 +1201,7 @@ export default function Editor() {
 
   // Standard Hotkeys for Brush Size
   useHotKey('[', () => {
-    setBrushSize(currentBrushSize => {
+    setBrushSize((currentBrushSize: number) => {
       if (currentBrushSize > 10) {
         return currentBrushSize - 10
       }
@@ -1189,7 +1213,7 @@ export default function Editor() {
   })
 
   useHotKey(']', () => {
-    setBrushSize(currentBrushSize => {
+    setBrushSize((currentBrushSize: number) => {
       return currentBrushSize + 10
     })
   })

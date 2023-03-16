@@ -9,6 +9,7 @@ from lama_cleaner.schema import Config
 
 
 class InstructPix2Pix(DiffusionInpaintModel):
+    name = "instruct_pix2pix"
     pad_mod = 8
     min_size = 512
 
@@ -51,8 +52,6 @@ class InstructPix2Pix(DiffusionInpaintModel):
         return: BGR IMAGE
         edit = pipe(prompt, image=image, num_inference_steps=20, image_guidance_scale=1.5, guidance_scale=7).images[0]
         """
-        set_seed(config.sd_seed)
-
         output = self.model(
             image=PIL.Image.fromarray(image),
             prompt=config.prompt,
@@ -61,6 +60,7 @@ class InstructPix2Pix(DiffusionInpaintModel):
             image_guidance_scale=config.p2p_image_guidance_scale,
             guidance_scale=config.p2p_guidance_scale,
             output_type="np.array",
+            generator=torch.manual_seed(config.sd_seed)
         ).images[0]
 
         output = (output * 255).round().astype("uint8")

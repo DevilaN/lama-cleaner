@@ -119,8 +119,6 @@ class SD(DiffusionInpaintModel):
 
         self.model.scheduler = scheduler
 
-        set_seed(config.sd_seed)
-
         if config.sd_mask_blur != 0:
             k = 2 * config.sd_mask_blur + 1
             mask = cv2.GaussianBlur(mask, (k, k), 0)[:, :, np.newaxis]
@@ -138,6 +136,7 @@ class SD(DiffusionInpaintModel):
             callback=self.callback,
             height=img_h,
             width=img_w,
+            generator=torch.manual_seed(config.sd_seed),
         ).images[0]
 
         output = (output * 255).round().astype("uint8")
@@ -160,8 +159,20 @@ class SD(DiffusionInpaintModel):
 
 
 class SD15(SD):
+    name = "sd1.5"
     model_id_or_path = "runwayml/stable-diffusion-inpainting"
 
 
+class Anything4(SD):
+    name = "anything4"
+    model_id_or_path = "Sanster/anything-4.0-inpainting"
+
+
+class RealisticVision14(SD):
+    name = "realisticVision1.4"
+    model_id_or_path = "Sanster/Realistic_Vision_V1.4-inpainting"
+
+
 class SD2(SD):
+    name = "sd2"
     model_id_or_path = "stabilityai/stable-diffusion-2-inpainting"

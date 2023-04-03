@@ -18,13 +18,9 @@ import {
 } from 'react-zoom-pan-pinch'
 import { useRecoilState, useRecoilValue, useSetRecoilState } from 'recoil'
 import { useWindowSize, useKey, useKeyPressEvent } from 'react-use'
-import inpaint, {
-  downloadToOutput,
-  postInteractiveSeg,
-} from '../../adapters/inpainting'
+import inpaint, { downloadToOutput, runPlugin } from '../../adapters/inpainting'
 import Button from '../shared/Button'
 import Slider from './Slider'
-import SizeSelector from './SizeSelector'
 import {
   askWritePermission,
   copyCanvasImage,
@@ -50,6 +46,8 @@ import {
   isInteractiveSegRunningState,
   isInteractiveSegState,
   isPix2PixState,
+  isPluginRunningState,
+  isProcessingState,
   negativePropmtState,
   propmtState,
   runManuallyState,
@@ -69,6 +67,7 @@ import FileSelect from '../FileSelect/FileSelect'
 import InteractiveSeg from '../InteractiveSeg/InteractiveSeg'
 import InteractiveSegConfirmActions from '../InteractiveSeg/ConfirmActions'
 import InteractiveSegReplaceModal from '../InteractiveSeg/ReplaceModal'
+import { PluginName } from '../Plugins/Plugins'
 import MakeGIF from './MakeGIF'
 
 const TOOLBAR_SIZE = 200
@@ -118,13 +117,15 @@ export default function Editor() {
   const croperRect = useRecoilValue(croperState)
   const setToastState = useSetRecoilState(toastState)
   const [isInpainting, setIsInpainting] = useRecoilState(isInpaintingState)
+  const setIsPluginRunning = useSetRecoilState(isPluginRunningState)
+  const isProcessing = useRecoilValue(isProcessingState)
   const runMannually = useRecoilValue(runManuallyState)
   const isDiffusionModels = useRecoilValue(isDiffusionModelsState)
   const isPix2Pix = useRecoilValue(isPix2PixState)
   const [isInteractiveSeg, setIsInteractiveSeg] = useRecoilState(
     isInteractiveSegState
   )
-  const [isInteractiveSegRunning, setIsInteractiveSegRunning] = useRecoilState(
+  const setIsInteractiveSegRunning = useSetRecoilState(
     isInteractiveSegRunningState
   )
 
@@ -167,7 +168,6 @@ export default function Editor() {
   const [scale, setScale] = useState<number>(1)
   const [panned, setPanned] = useState<boolean>(false)
   const [minScale, setMinScale] = useState<number>(1.0)
-  const [sizeLimit, setSizeLimit] = useState<number>(1080)
   const windowSize = useWindowSize()
   const windowCenterX = windowSize.width / 2
   const windowCenterY = windowSize.height / 2
@@ -187,8 +187,8 @@ export default function Editor() {
   const enableFileManager = useRecoilValue(enableFileManagerState)
   const isEnableAutoSaving = useRecoilValue(isEnableAutoSavingState)
 
-  const setImageWidth = useSetRecoilState(imageWidthState)
-  const setImageHeight = useSetRecoilState(imageHeightState)
+  const [imageWidth, setImageWidth] = useRecoilState(imageWidthState)
+  const [imageHeight, setImageHeight] = useRecoilState(imageHeightState)
   const app = useRecoilValue(appState)
 
   const draw = useCallback(
@@ -196,40 +196,27 @@ export default function Editor() {
       if (!context) {
         return
       }
-      context.clearRect(0, 0, context.canvas.width, context.canvas.height)
-      context.drawImage(
-        render,
-        0,
-        0,
-        original.naturalWidth,
-        original.naturalHeight
+      console.log(
+        `[draw] render size: ${render.width}x${render.height} image size: ${imageWidth}x${imageHeight} canvas size: ${context.canvas.width}x${context.canvas.height}`
       )
+
+      context.clearRect(0, 0, context.canvas.width, context.canvas.height)
+      context.drawImage(render, 0, 0, imageWidth, imageHeight)
       if (isInteractiveSeg && tmpInteractiveSegMask !== null) {
-        context.drawImage(
-          tmpInteractiveSegMask,
-          0,
-          0,
-          original.naturalWidth,
-          original.naturalHeight
-        )
+        context.drawImage(tmpInteractiveSegMask, 0, 0, imageWidth, imageHeight)
       }
       if (!isInteractiveSeg && interactiveSegMask !== null) {
-        context.drawImage(
-          interactiveSegMask,
-          0,
-          0,
-          original.naturalWidth,
-          original.naturalHeight
-        )
+        context.drawImage(interactiveSegMask, 0, 0, imageWidth, imageHeight)
       }
       drawLines(context, lineGroup)
     },
     [
       context,
-      original,
       isInteractiveSeg,
       tmpInteractiveSegMask,
       interactiveSegMask,
+      imageHeight,
+      imageWidth,
     ]
   )
 
@@ -247,13 +234,7 @@ export default function Editor() {
 
       if (maskImage !== undefined && maskImage !== null) {
         // TODO: check whether draw yellow mask works on backend
-        ctx.drawImage(
-          maskImage,
-          0,
-          0,
-          original.naturalWidth,
-          original.naturalHeight
-        )
+        ctx.drawImage(maskImage, 0, 0, imageWidth, imageHeight)
       }
 
       _lineGroups.forEach(lineGroup => {
@@ -274,9 +255,9 @@ export default function Editor() {
               size: 9999999999,
               pts: [
                 { x: 0, y: 0 },
-                { x: original.naturalWidth, y: 0 },
-                { x: original.naturalWidth, y: original.naturalHeight },
-                { x: 0, y: original.naturalHeight },
+                { x: imageWidth, y: 0 },
+                { x: imageWidth, y: imageHeight },
+                { x: 0, y: imageHeight },
               ],
             },
           ],
@@ -284,7 +265,7 @@ export default function Editor() {
         )
       }
     },
-    [context, maskCanvas, isPix2Pix]
+    [context, maskCanvas, isPix2Pix, imageWidth, imageHeight]
   )
 
   const hadDrawSomething = useCallback(() => {
@@ -385,7 +366,6 @@ export default function Editor() {
           croperRect,
           promptVal,
           negativePromptVal,
-          sizeLimit.toString(),
           seedVal,
           useCustomMask ? undefined : maskCanvas.toDataURL(),
           useCustomMask ? customMask : undefined,
@@ -437,7 +417,6 @@ export default function Editor() {
       settings.graduallyInpainting,
       settings,
       croperRect,
-      sizeLimit,
       promptVal,
       negativePromptVal,
       drawOnCurrentRender,
@@ -538,6 +517,132 @@ export default function Editor() {
     }
   }, [runInpainting])
 
+  const getCurrentRender = useCallback(async () => {
+    let targetFile = file
+    if (renders.length > 0) {
+      const lastRender = renders[renders.length - 1]
+      targetFile = await srcToFile(lastRender.currentSrc, file.name, file.type)
+    }
+    return targetFile
+  }, [file, renders])
+
+  useEffect(() => {
+    emitter.on(PluginName.InteractiveSeg, () => {
+      setIsInteractiveSeg(true)
+      if (interactiveSegMask !== null) {
+        setShowInteractiveSegModal(true)
+      }
+    })
+    return () => {
+      emitter.off(PluginName.InteractiveSeg)
+    }
+  })
+
+  const runRenderablePlugin = useCallback(
+    async (name: string, data?: any) => {
+      if (isProcessing) {
+        return
+      }
+      try {
+        // TODO 要不要加 undoCurrentLine？？
+        const start = new Date()
+        setIsPluginRunning(true)
+        const targetFile = await getCurrentRender()
+        const res = await runPlugin(name, targetFile, data?.upscale)
+        if (!res) {
+          throw new Error('Something went wrong on server side.')
+        }
+        const { blob } = res
+        const newRender = new Image()
+        await loadImage(newRender, blob)
+        setImageHeight(newRender.height)
+        setImageWidth(newRender.width)
+        const newRenders = [...renders, newRender]
+        setRenders(newRenders)
+        const newLineGroups = [...lineGroups, []]
+        setLineGroups(newLineGroups)
+
+        const end = new Date()
+        const time = end.getTime() - start.getTime()
+
+        setToastState({
+          open: true,
+          desc: `Run ${name} successfully in ${time / 1000}s`,
+          state: 'success',
+          duration: 3000,
+        })
+
+        const rW = windowSize.width / newRender.width
+        const rH = (windowSize.height - TOOLBAR_SIZE) / newRender.height
+        let s = 1.0
+        if (rW < 1 || rH < 1) {
+          s = Math.min(rW, rH)
+        }
+        setMinScale(s)
+        setScale(s)
+        viewportRef.current?.centerView(s, 1)
+      } catch (e: any) {
+        setToastState({
+          open: true,
+          desc: e.message ? e.message : e.toString(),
+          state: 'error',
+          duration: 3000,
+        })
+      } finally {
+        setIsPluginRunning(false)
+      }
+    },
+    [
+      renders,
+      setRenders,
+      getCurrentRender,
+      setIsPluginRunning,
+      isProcessing,
+      setImageHeight,
+      setImageWidth,
+      lineGroups,
+      viewportRef,
+      windowSize,
+      setLineGroups,
+    ]
+  )
+
+  useEffect(() => {
+    emitter.on(PluginName.RemoveBG, () => {
+      runRenderablePlugin(PluginName.RemoveBG)
+    })
+    return () => {
+      emitter.off(PluginName.RemoveBG)
+    }
+  }, [runRenderablePlugin])
+
+  useEffect(() => {
+    emitter.on(PluginName.GFPGAN, () => {
+      runRenderablePlugin(PluginName.GFPGAN)
+    })
+    return () => {
+      emitter.off(PluginName.GFPGAN)
+    }
+  }, [runRenderablePlugin])
+
+  useEffect(() => {
+    emitter.on(PluginName.RestoreFormer, () => {
+      runRenderablePlugin(PluginName.RestoreFormer)
+    })
+    return () => {
+      emitter.off(PluginName.RestoreFormer)
+    }
+  }, [runRenderablePlugin])
+
+  useEffect(() => {
+    emitter.on(PluginName.RealESRGAN, (data: any) => {
+      runRenderablePlugin(PluginName.RealESRGAN, data)
+    })
+    return () => {
+      emitter.off(PluginName.RealESRGAN)
+    }
+  }, [runRenderablePlugin])
+
   const hadRunInpainting = () => {
     return renders.length !== 0
   }
@@ -583,17 +688,35 @@ export default function Editor() {
     [isInpainting]
   )
 
+  const getCurrentWidthHeight = useCallback(() => {
+    let width = 512
+    let height = 512
+    if (!isOriginalLoaded) {
+      return [width, height]
+    }
+    if (renders.length === 0) {
+      width = original.naturalWidth
+      height = original.naturalHeight
+    } else if (renders.length !== 0) {
+      width = renders[renders.length - 1].width
+      height = renders[renders.length - 1].height
+    }
+
+    return [width, height]
+  }, [original, isOriginalLoaded, renders])
+
   // Draw once the original image is loaded
   useEffect(() => {
     if (!isOriginalLoaded) {
       return
     }
 
-    const rW = windowSize.width / original.naturalWidth
-    const rH = (windowSize.height - TOOLBAR_SIZE) / original.naturalHeight
+    const [width, height] = getCurrentWidthHeight()
+    setImageWidth(width)
+    setImageHeight(height)
 
-    setImageWidth(original.naturalWidth)
-    setImageHeight(original.naturalHeight)
+    const rW = windowSize.width / width
+    const rH = (windowSize.height - TOOLBAR_SIZE) / height
 
     let s = 1.0
     if (rW < 1 || rH < 1) {
@@ -602,17 +725,22 @@ export default function Editor() {
     setMinScale(s)
     setScale(s)
 
+    console.log(
+      `[on file load] image size: ${width}x${height}, canvas size: ${context?.canvas.width}x${context?.canvas.height} scale: ${s}, initialCentered: ${initialCentered}`
+    )
+
     if (context?.canvas) {
-      context.canvas.width = original.naturalWidth
-      context.canvas.height = original.naturalHeight
+      context.canvas.width = width
+      context.canvas.height = height
+      console.log('[on file load] set canvas size && drawOnCurrentRender')
       drawOnCurrentRender([])
     }
 
     if (!initialCentered) {
+      // 防止每次擦除以后图片 zoom 还原
       viewportRef.current?.centerView(s, 1)
+      console.log('[on file load] centerView')
       setInitialCentered(true)
-      const imageSizeLimit = Math.max(original.width, original.height)
-      setSizeLimit(imageSizeLimit)
     }
   }, [
     context?.canvas,
@@ -622,19 +750,26 @@ export default function Editor() {
     windowSize,
     initialCentered,
     drawOnCurrentRender,
+    getCurrentWidthHeight,
   ])
+
+  useEffect(() => {
+    console.log('[useEffect] centerView')
+    // render 改变尺寸以后，undo/redo 重新 center
+    viewportRef?.current?.centerView(minScale, 1)
+  }, [context?.canvas.height, context?.canvas.width, viewportRef, minScale])
 
   // Zoom reset
   const resetZoom = useCallback(() => {
-    if (!minScale || !original || !windowSize) {
+    if (!minScale || !windowSize) {
       return
     }
     const viewport = viewportRef.current
     if (!viewport) {
       return
     }
-    const offsetX = (windowSize.width - original.width * minScale) / 2
-    const offsetY = (windowSize.height - original.height * minScale) / 2
+    const offsetX = (windowSize.width - imageWidth * minScale) / 2
+    const offsetY = (windowSize.height - imageHeight * minScale) / 2
     viewport.setTransform(offsetX, offsetY, minScale, 200, 'easeOutQuad')
     viewport.state.scale = minScale
 
@@ -643,8 +778,8 @@ export default function Editor() {
   }, [
     viewportRef,
     windowSize,
-    original,
-    original.width,
+    imageHeight,
+    imageWidth,
     windowSize.height,
     minScale,
   ])
@@ -685,7 +820,7 @@ export default function Editor() {
   }, [])
 
   const handleEscPressed = () => {
-    if (isInpainting) {
+    if (isProcessing) {
       return
     }
 
@@ -759,13 +894,7 @@ export default function Editor() {
     }
 
     setIsInteractiveSegRunning(true)
-
-    let targetFile = file
-    if (renders.length > 0) {
-      const lastRender = renders[renders.length - 1]
-      targetFile = await srcToFile(lastRender.currentSrc, file.name, file.type)
-    }
-
+    const targetFile = await getCurrentRender()
     const prevMask = null
     // prev_mask seems to be not working better
     // if (tmpInteractiveSegMask !== null) {
@@ -777,7 +906,13 @@ export default function Editor() {
     // }
 
     try {
-      const res = await postInteractiveSeg(targetFile, prevMask, newClicks)
+      const res = await runPlugin(
+        PluginName.InteractiveSeg,
+        targetFile,
+        undefined,
+        prevMask,
+        newClicks
+      )
       if (!res) {
         throw new Error('Something went wrong on server side.')
       }
@@ -866,6 +1001,9 @@ export default function Editor() {
   }
 
   const onMouseDown = (ev: SyntheticEvent) => {
+    if (isProcessing) {
+      return
+    }
     if (isInteractiveSeg) {
       return
     }
@@ -880,9 +1018,6 @@ export default function Editor() {
     }
     const canvas = context?.canvas
     if (!canvas) {
-      return
-    }
-    if (isInpainting) {
       return
     }
 
@@ -950,12 +1085,20 @@ export default function Editor() {
 
     const newRenders = [...renders]
     setRenders(newRenders)
-    if (newRenders.length === 0) {
-      draw(original, [])
-    } else {
-      draw(newRenders[newRenders.length - 1], [])
-    }
-  }, [draw, renders, redoRenders, redoLineGroups, lineGroups, original])
+    // if (newRenders.length === 0) {
+    //   draw(original, [])
+    // } else {
+    //   draw(newRenders[newRenders.length - 1], [])
+    // }
+  }, [
+    draw,
+    renders,
+    redoRenders,
+    redoLineGroups,
+    lineGroups,
+    original,
+    context,
+  ])
 
   const undo = () => {
     if (runMannually && curLineGroup.length !== 0) {
@@ -976,7 +1119,6 @@ export default function Editor() {
     }
     if (isCmdZ) {
       event.preventDefault()
-      console.log('undo')
       return true
     }
     return false
@@ -987,13 +1129,12 @@ export default function Editor() {
     undoRender,
     runMannually,
     curLineGroup,
+    context?.canvas,
+    renders,
   ])
 
   const disableUndo = () => {
-    if (isInteractiveSeg) {
-      return true
-    }
-    if (isInpainting) {
+    if (isProcessing) {
       return true
     }
     if (renders.length > 0) {
@@ -1037,7 +1178,7 @@ export default function Editor() {
     const render = redoRenders.pop()!
     const newRenders = [...renders, render]
     setRenders(newRenders)
-    draw(newRenders[newRenders.length - 1], [])
+    // draw(newRenders[newRenders.length - 1], [])
   }, [draw, renders, redoRenders, redoLineGroups, lineGroups, original])
 
   const redo = () => {
@@ -1060,7 +1201,6 @@ export default function Editor() {
     }
     if (isCmdZ) {
       event.preventDefault()
-      console.log('redo')
       return true
     }
     return false
@@ -1074,10 +1214,7 @@ export default function Editor() {
   ])
 
   const disableRedo = () => {
-    if (isInteractiveSeg) {
-      return true
-    }
-    if (isInpainting) {
+    if (isProcessing) {
       return true
     }
     if (redoRenders.length > 0) {
@@ -1165,10 +1302,6 @@ export default function Editor() {
     }
   }
 
-  const onSizeLimitChange = (_sizeLimit: number) => {
-    setSizeLimit(_sizeLimit)
-  }
-
   const toggleShowBrush = (newState: boolean) => {
     if (newState !== showBrush && !isPanning) {
       setShowBrush(newState)
@@ -1184,20 +1317,6 @@ export default function Editor() {
     }
     return undefined
   }, [showBrush, isPanning])
-
-  useHotKey(
-    'i',
-    () => {
-      if (!isInteractiveSeg && isOriginalLoaded) {
-        setIsInteractiveSeg(true)
-        if (interactiveSegMask !== null) {
-          setShowInteractiveSegModal(true)
-        }
-      }
-    },
-    {},
-    [isInteractiveSeg, interactiveSegMask, isOriginalLoaded]
-  )
 
   // Standard Hotkeys for Brush Size
   useHotKey('[', () => {
@@ -1370,11 +1489,7 @@ export default function Editor() {
         }}
       >
         <TransformComponent
-          contentClass={
-            isInpainting || isInteractiveSegRunning
-              ? 'editor-canvas-loading'
-              : ''
-          }
+          contentClass={isProcessing ? 'editor-canvas-loading' : ''}
           contentStyle={{
             visibility: initialCentered ? 'visible' : 'hidden',
           }}
@@ -1411,36 +1526,37 @@ export default function Editor() {
             <div
               className="original-image-container"
               style={{
-                width: `${original.naturalWidth}px`,
-                height: `${original.naturalHeight}px`,
+                width: `${imageWidth}px`,
+                height: `${imageHeight}px`,
               }}
             >
               {showOriginal && (
-                <div
-                  className="editor-slider"
-                  style={{
-                    marginRight: `${sliderPos}%`,
-                  }}
-                />
+                <>
+                  <div
+                    className="editor-slider"
+                    style={{
+                      marginRight: `${sliderPos}%`,
+                    }}
+                  />
+                  <img
+                    className="original-image"
+                    src={original.src}
+                    alt="original"
+                    style={{
+                      width: `${imageWidth}px`,
+                      height: `${imageHeight}px`,
+                    }}
+                  />
+                </>
               )}
-
-              <img
-                className="original-image"
-                src={original.src}
-                alt="original"
-                style={{
-                  width: `${original.naturalWidth}px`,
-                  height: `${original.naturalHeight}px`,
-                }}
-              />
             </div>
           </div>
 
           <Croper
-            maxHeight={original.naturalHeight}
-            maxWidth={original.naturalWidth}
-            minHeight={Math.min(256, original.naturalHeight)}
-            minWidth={Math.min(256, original.naturalWidth)}
+            maxHeight={imageHeight}
+            maxWidth={imageWidth}
+            minHeight={Math.min(256, imageHeight)}
+            minWidth={Math.min(256, imageWidth)}
             scale={scale}
             show={isDiffusionModels && settings.showCroper}
           />
@@ -1467,6 +1583,7 @@ export default function Editor() {
       onMouseMove={onMouseMove}
       onMouseUp={onPointerUp}
     >
+      <MakeGIF renders={renders} />
       <InteractiveSegConfirmActions
         onAcceptClick={onInteractiveAccept}
         onCancelClick={onInteractiveCancel}
@@ -1496,15 +1613,6 @@ export default function Editor() {
       )}
 
       <div className="editor-toolkit-panel">
-        {isDiffusionModels || file === undefined ? (
-          <></>
-        ) : (
-          <SizeSelector
-            onChange={onSizeLimitChange}
-            originalWidth={original.naturalWidth}
-            originalHeight={original.naturalHeight}
-          />
-        )}
         <Slider
           label="Brush"
           min={MIN_BRUSH_SIZE}
@@ -1514,17 +1622,6 @@ export default function Editor() {
           onClick={() => setShowRefBrush(false)}
         />
         <div className="editor-toolkit-btns">
-          <Button
-            toolTip="Interactive Segmentation"
-            icon={<CursorArrowRaysIcon />}
-            disabled={isInteractiveSeg || isInpainting || !isOriginalLoaded}
-            onClick={() => {
-              setIsInteractiveSeg(true)
-              if (interactiveSegMask !== null) {
-                setShowInteractiveSegModal(true)
-              }
-            }}
-          />
           <Button
             toolTip="Reset Zoom & Pan"
             icon={<ArrowsPointingOutIcon />}
@@ -1591,7 +1688,6 @@ export default function Editor() {
             }}
             disabled={renders.length === 0}
           />
-          <MakeGIF renders={renders} />
           <Button
             toolTip="Save Image"
             icon={<ArrowDownTrayIcon />}
@@ -1617,8 +1713,7 @@ export default function Editor() {
                 </svg>
               }
               disabled={
-                isInpainting ||
-                isInteractiveSeg ||
+                isProcessing ||
                 (!hadDrawSomething() && interactiveSegMask === null)
               }
               onClick={() => {

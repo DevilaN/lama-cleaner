@@ -1,28 +1,35 @@
 #!/usr/bin/env python3
+import os
 
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+
+import imghdr
 import io
-import json
 import logging
 import multiprocessing
-import os
 import random
 import time
-import imghdr
 from pathlib import Path
-from typing import Union
-from PIL import Image
 
 import cv2
-import torch
 import numpy as np
+import torch
+from PIL import Image
 from loguru import logger
-from watchdog.events import FileSystemEventHandler
 
-from lama_cleaner.interactive_seg import InteractiveSeg, Click
-from lama_cleaner.make_gif import make_compare_gif
-from lama_cleaner.model_manager import ModelManager
-from lama_cleaner.schema import Config
+from lama_cleaner.const import SD15_MODELS
 from lama_cleaner.file_manager import FileManager
+from lama_cleaner.model.utils import torch_gc
+from lama_cleaner.model_manager import ModelManager
+from lama_cleaner.plugins import (
+    InteractiveSeg,
+    RemoveBG,
+    RealESRGANUpscaler,
+    MakeGIF,
+    GFPGANPlugin,
+    RestoreFormerPlugin,
+)
+from lama_cleaner.schema import Config
 
 try:
     torch._C._jit_override_can_fuse_on_cpu(False)
@@ -84,13 +91,15 @@ CORS(app, expose_headers=["Content-Disposition"])
 model: ModelManager = None
 thumb: FileManager = None
 output_dir: str = None
-interactive_seg_model: InteractiveSeg = None
 device = None
 input_image_path: str = None
 is_disable_model_switch: bool = False
+is_controlnet: bool = False
 is_enable_file_manager: bool = False
 is_enable_auto_saving: bool = False
 is_desktop: bool = False
+image_quality: int = 95
+plugins = {}
 
 
 def get_image_ext(img_bytes):
@@ -103,25 +112,6 @@ def get_image_ext(img_bytes):
 def diffuser_callback(i, t, latents):
     pass
     # socketio.emit('diffusion_step', {'diffusion_step': step})
-
-
-@app.route("/make_gif", methods=["POST"])
-def make_gif():
-    input = request.files
-    filename = request.form["filename"]
-    origin_image_bytes = input["origin_img"].read()
-    clean_image_bytes = input["clean_img"].read()
-    origin_image, _ = load_img(origin_image_bytes)
-    clean_image, _ = load_img(clean_image_bytes)
-    gif_bytes = make_compare_gif(
-        Image.fromarray(origin_image), Image.fromarray(clean_image)
-    )
-    return send_file(
-        io.BytesIO(gif_bytes),
-        mimetype="image/gif",
-        as_attachment=True,
-        attachment_filename=filename,
-    )
 
 
 @app.route("/save_image", methods=["POST"])
@@ -209,11 +199,7 @@ def process():
     interpolation = cv2.INTER_CUBIC
 
     form = request.form
-    size_limit: Union[int, str] = form.get("sizeLimit", "1080")
-    if size_limit == "Original":
-        size_limit = max(image.shape)
-    else:
-        size_limit = int(size_limit)
+    size_limit = max(image.shape)
 
     if "paintByExampleImage" in input:
         paint_by_example_example_image, _ = load_img(
@@ -257,6 +243,7 @@ def process():
         p2p_steps=form["p2pSteps"],
         p2p_image_guidance_scale=form["p2pImageGuidanceScale"],
         p2p_guidance_scale=form["p2pGuidanceScale"],
+        controlnet_conditioning_scale=form["controlnet_conditioning_scale"],
     )
 
     if config.sd_seed == -1:
@@ -297,10 +284,12 @@ def process():
 
     ext = get_image_ext(origin_image_bytes)
 
+    # fmt: off
     if exif is not None:
-        bytes_io = io.BytesIO(pil_to_bytes(Image.fromarray(res_np_img), ext, exif=exif))
+        bytes_io = io.BytesIO(pil_to_bytes(Image.fromarray(res_np_img), ext, quality=image_quality, exif=exif))
     else:
-        bytes_io = io.BytesIO(pil_to_bytes(Image.fromarray(res_np_img), ext))
+        bytes_io = io.BytesIO(pil_to_bytes(Image.fromarray(res_np_img), ext, quality=image_quality))
+    # fmt: on
 
     response = make_response(
         send_file(
@@ -313,56 +302,89 @@ def process():
     return response
 
 
-@app.route("/interactive_seg", methods=["POST"])
-def interactive_seg():
-    input = request.files
-    origin_image_bytes = input["image"].read()  # RGB
-    image, _ = load_img(origin_image_bytes)
-    if "mask" in input:
-        mask, _ = load_img(input["mask"].read(), gray=True)
-    else:
-        mask = None
+@app.route("/run_plugin", methods=["POST"])
+def run_plugin():
+    form = request.form
+    files = request.files
+    name = form["name"]
+    if name not in plugins:
+        return "Plugin not found", 500
 
-    _clicks = json.loads(request.form["clicks"])
-    clicks = []
-    for i, click in enumerate(_clicks):
-        clicks.append(
-            Click(coords=(click[1], click[0]), indx=i, is_positive=click[2] == 1)
-        )
+    origin_image_bytes = files["image"].read()  # RGB
+    rgb_np_img, alpha_channel, exif = load_img(origin_image_bytes, return_exif=True)
 
     start = time.time()
-    new_mask = interactive_seg_model(image, clicks=clicks, prev_mask=mask)
-    logger.info(f"interactive seg process time: {(time.time() - start) * 1000}ms")
+    try:
+        bgr_res = plugins[name](rgb_np_img, files, form)
+    except RuntimeError as e:
+        torch.cuda.empty_cache()
+        if "CUDA out of memory. " in str(e):
+            # NOTE: the string may change?
+            return "CUDA out of memory", 500
+        else:
+            logger.exception(e)
+            return "Internal Server Error", 500
+
+    logger.info(f"{name} process time: {(time.time() - start) * 1000}ms")
+    torch_gc()
+
+    if name == MakeGIF.name:
+        return send_file(
+            io.BytesIO(bgr_res),
+            mimetype="image/gif",
+            as_attachment=True,
+            attachment_filename=form["filename"],
+        )
+    if name == InteractiveSeg.name:
+        return make_response(
+            send_file(
+                io.BytesIO(numpy_to_bytes(bgr_res, "png")),
+                mimetype="image/png",
+            )
+        )
+
+    if name == RemoveBG.name:
+        rgb_res = cv2.cvtColor(bgr_res, cv2.COLOR_BGRA2RGBA)
+        ext = "png"
+    else:
+        rgb_res = cv2.cvtColor(bgr_res, cv2.COLOR_BGR2RGB)
+        ext = get_image_ext(origin_image_bytes)
+        if alpha_channel is not None:
+            if alpha_channel.shape[:2] != rgb_res.shape[:2]:
+                alpha_channel = cv2.resize(
+                    alpha_channel, dsize=(rgb_res.shape[1], rgb_res.shape[0])
+                )
+            rgb_res = np.concatenate(
+                (rgb_res, alpha_channel[:, :, np.newaxis]), axis=-1
+            )
+
     response = make_response(
         send_file(
-            io.BytesIO(numpy_to_bytes(new_mask, "png")),
-            mimetype=f"image/png",
+            io.BytesIO(
+                pil_to_bytes(
+                    Image.fromarray(rgb_res), ext, quality=image_quality, exif=exif
+                )
+            ),
+            mimetype=f"image/{ext}",
         )
     )
     return response
 
 
+@app.route("/server_config", methods=["GET"])
+def get_server_config():
+    return {
+        "isControlNet": is_controlnet,
+        "isDisableModelSwitchState": is_disable_model_switch,
+        "isEnableAutoSaving": is_enable_auto_saving,
+        "enableFileManager": is_enable_file_manager,
+        "plugins": list(plugins.keys()),
+    }, 200
+
+
 @app.route("/model")
 def current_model():
     return model.name, 200
-
-
-@app.route("/is_disable_model_switch")
-def get_is_disable_model_switch():
-    res = "true" if is_disable_model_switch else "false"
-    return res, 200
-
-
-@app.route("/is_enable_file_manager")
-def get_is_enable_file_manager():
-    res = "true" if is_enable_file_manager else "false"
-    return res, 200
-
-
-@app.route("/is_enable_auto_saving")
-def get_is_enable_auto_saving():
-    res = "true" if is_enable_auto_saving else "false"
-    return res, 200
 
 
 @app.route("/model_downloaded/<name>")
@@ -411,14 +433,41 @@ def set_input_photo():
         return "No Input Image"
 
 
-class FSHandler(FileSystemEventHandler):
-    def on_modified(self, event):
-        print("File modified: %s" % event.src_path)
+def build_plugins(args):
+    global plugins
+    if args.enable_interactive_seg:
+        logger.info(f"Initialize {InteractiveSeg.name} plugin")
+        plugins[InteractiveSeg.name] = InteractiveSeg()
+    if args.enable_remove_bg:
+        logger.info(f"Initialize {RemoveBG.name} plugin")
+        plugins[RemoveBG.name] = RemoveBG()
+    if args.enable_realesrgan:
+        logger.info(
+            f"Initialize {RealESRGANUpscaler.name} plugin: {args.realesrgan_model}, {args.realesrgan_device}"
+        )
+        plugins[RealESRGANUpscaler.name] = RealESRGANUpscaler(
+            args.realesrgan_model,
+            args.realesrgan_device,
+            no_half=args.realesrgan_no_half,
+        )
+    if args.enable_gfpgan:
+        logger.info(f"Initialize {GFPGANPlugin.name} plugin")
+        plugins[GFPGANPlugin.name] = GFPGANPlugin(
+            args.gfpgan_device, upscaler=plugins.get(RealESRGANUpscaler.name, None)
+        )
+    if args.enable_restoreformer:
+        logger.info(f"Initialize {RestoreFormerPlugin.name} plugin")
+        plugins[RestoreFormerPlugin.name] = RestoreFormerPlugin(
+            args.restoreformer_device,
+            upscaler=plugins.get(RealESRGANUpscaler.name, None),
+        )
+    if args.enable_gif:
+        logger.info(f"Initialize GIF plugin")
+        plugins[MakeGIF.name] = MakeGIF()
 
 
 def main(args):
     global model
-    global interactive_seg_model
     global device
     global input_image_path
     global is_disable_model_switch
@@ -427,9 +476,18 @@ def main(args):
     global thumb
     global output_dir
     global is_enable_auto_saving
+    global is_controlnet
+    global image_quality
+
+    build_plugins(args)
+
+    image_quality = args.quality
+
+    if args.sd_controlnet and args.model in SD15_MODELS:
+        is_controlnet = True
 
     output_dir = args.output_dir
-    if output_dir is not None:
+    if output_dir:
         is_enable_auto_saving = True
 
     device = torch.device(args.device)
@@ -464,19 +522,19 @@ def main(args):
 
     model = ModelManager(
         name=args.model,
+        sd_controlnet=args.sd_controlnet,
         device=device,
         no_half=args.no_half,
         hf_access_token=args.hf_access_token,
         disable_nsfw=args.sd_disable_nsfw or args.disable_nsfw,
         sd_cpu_textencoder=args.sd_cpu_textencoder,
         sd_run_local=args.sd_run_local,
+        sd_local_model_path=args.sd_local_model_path,
         local_files_only=args.local_files_only,
         cpu_offload=args.cpu_offload,
         enable_xformers=args.sd_enable_xformers or args.enable_xformers,
         callback=diffuser_callback,
     )
-
-    interactive_seg_model = InteractiveSeg()
 
     if args.gui:
         app_width, app_height = args.gui_size

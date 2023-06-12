@@ -4,50 +4,10 @@ from datetime import datetime
 
 import gradio as gr
 from loguru import logger
-from pydantic import BaseModel
 
 from lama_cleaner.const import *
 
 _config_file = None
-
-
-class Config(BaseModel):
-    host: str = "127.0.0.1"
-    port: int = 8080
-    model: str = DEFAULT_MODEL
-    sd_local_model_path: str = None
-    sd_controlnet: bool = False
-    device: str = DEFAULT_DEVICE
-    gui: bool = False
-    no_gui_auto_close: bool = False
-    no_half: bool = False
-    cpu_offload: bool = False
-    disable_nsfw: bool = False
-    sd_cpu_textencoder: bool = False
-    enable_xformers: bool = False
-    local_files_only: bool = False
-    model_dir: str = DEFAULT_MODEL_DIR
-    input: str = None
-    output_dir: str = None
-    # plugins
-    enable_interactive_seg: bool = False
-    enable_remove_bg: bool = False
-    enable_realesrgan: bool = False
-    realesrgan_device: str = "cpu"
-    realesrgan_model: str = RealESRGANModelName.realesr_general_x4v3.value
-    enable_gfpgan: bool = False
-    gfpgan_device: str = "cpu"
-    enable_restoreformer: bool = False
-    restoreformer_device: str = "cpu"
-    enable_gif: bool = False
-
-
-def load_config(installer_config: str):
-    if os.path.exists(installer_config):
-        with open(installer_config, "r", encoding="utf-8") as f:
-            return Config(**json.load(f))
-    else:
-        return Config()
 
 
 def save_config(
@@ -56,6 +16,7 @@ def save_config(
     model,
     sd_local_model_path,
     sd_controlnet,
+    sd_controlnet_method,
     device,
     gui,
     no_gui_auto_close,
@@ -70,7 +31,10 @@ def save_config(
     output_dir,
     quality,
     enable_interactive_seg,
+    interactive_seg_model,
+    interactive_seg_device,
     enable_remove_bg,
+    enable_anime_seg,
     enable_realesrgan,
     realesrgan_device,
     realesrgan_model,
@@ -159,9 +123,25 @@ def main(config_file: str):
                 enable_interactive_seg = gr.Checkbox(
                     init_config.enable_interactive_seg, label=INTERACTIVE_SEG_HELP
                 )
-                enable_remove_bg = gr.Checkbox(
-                    init_config.enable_remove_bg, label=REMOVE_BG_HELP
+                interactive_seg_model = gr.Radio(
+                    AVAILABLE_INTERACTIVE_SEG_MODELS,
+                    label=f"Segment Anything models. {INTERACTIVE_SEG_MODEL_HELP}",
+                    value=init_config.interactive_seg_model,
                 )
+                interactive_seg_device = gr.Radio(
+                    AVAILABLE_INTERACTIVE_SEG_DEVICES,
+                    label="Segment Anything Device",
+                    value=init_config.interactive_seg_device,
+                )
+                with gr.Row():
+                    enable_remove_bg = gr.Checkbox(
+                        init_config.enable_remove_bg, label=REMOVE_BG_HELP
+                    )
+                with gr.Row():
+                    enable_anime_seg = gr.Checkbox(
+                        init_config.enable_anime_seg, label=ANIMESEG_HELP
+                    )
+
                 with gr.Row():
                     enable_realesrgan = gr.Checkbox(
                         init_config.enable_realesrgan, label=REALESRGAN_HELP
@@ -203,6 +183,11 @@ def main(config_file: str):
                 sd_controlnet = gr.Checkbox(
                     init_config.sd_controlnet, label=f"{SD_CONTROLNET_HELP}"
                 )
+                sd_controlnet_method = gr.Radio(
+                    SD_CONTROLNET_CHOICES,
+                    lable="ControlNet method",
+                    value=init_config.sd_controlnet_method,
+                )
                 no_half = gr.Checkbox(init_config.no_half, label=f"{NO_HALF_HELP}")
                 cpu_offload = gr.Checkbox(
                     init_config.cpu_offload, label=f"{CPU_OFFLOAD_HELP}"
@@ -228,6 +213,7 @@ def main(config_file: str):
                 model,
                 sd_local_model_path,
                 sd_controlnet,
+                sd_controlnet_method,
                 device,
                 gui,
                 no_gui_auto_close,
@@ -242,7 +228,10 @@ def main(config_file: str):
                 output_dir,
                 quality,
                 enable_interactive_seg,
+                interactive_seg_model,
+                interactive_seg_device,
                 enable_remove_bg,
+                enable_anime_seg,
                 enable_realesrgan,
                 realesrgan_device,
                 realesrgan_model,

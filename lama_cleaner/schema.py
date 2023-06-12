@@ -97,3 +97,4 @@ class Config(BaseModel):
 
     # ControlNet
     controlnet_conditioning_scale: float = 0.4
+    controlnet_method: str = "control_v11p_sd15_canny"

@@ -38,6 +38,11 @@ def parse_args():
         "--sd-cpu-textencoder", action="store_true", help=SD_CPU_TEXTENCODER_HELP
     )
     parser.add_argument("--sd-controlnet", action="store_true", help=SD_CONTROLNET_HELP)
+    parser.add_argument(
+        "--sd-controlnet-method",
+        default=DEFAULT_CONTROLNET_METHOD,
+        choices=SD_CONTROLNET_CHOICES,
+    )
     parser.add_argument("--sd-local-model-path", default=None, help=SD_LOCAL_MODEL_HELP)
     parser.add_argument(
         "--local-files-only", action="store_true", help=LOCAL_FILES_ONLY_HELP
@@ -83,9 +88,25 @@ def parse_args():
         help=INTERACTIVE_SEG_HELP,
     )
     parser.add_argument(
+        "--interactive-seg-model",
+        default="vit_l",
+        choices=AVAILABLE_INTERACTIVE_SEG_MODELS,
+        help=INTERACTIVE_SEG_MODEL_HELP,
+    )
+    parser.add_argument(
+        "--interactive-seg-device",
+        default="cpu",
+        choices=AVAILABLE_INTERACTIVE_SEG_DEVICES,
+    )
+    parser.add_argument(
         "--enable-remove-bg",
         action="store_true",
         help=REMOVE_BG_HELP,
+    )
+    parser.add_argument(
+        "--enable-anime-seg",
+        action="store_true",
+        help=ANIMESEG_HELP,
     )
     parser.add_argument(
         "--enable-realesrgan",
@@ -157,17 +178,15 @@ def parse_args():
     if args.config_installer:
         if args.installer_config is None:
             parser.error(
-                f"args.config_installer==True, must set args.installer_config to store config file"
+                "args.config_installer==True, must set args.installer_config to store config file"
             )
         from lama_cleaner.web_config import main
 
-        logger.info(f"Launching installer web config page")
+        logger.info("Launching installer web config page")
         main(args.installer_config)
         exit()
 
     if args.load_installer_config:
-        from lama_cleaner.web_config import load_config
-
         if args.installer_config and not os.path.exists(args.installer_config):
             parser.error(f"args.installer_config={args.installer_config} not exists")
 
@@ -178,16 +197,18 @@ def parse_args():
                 setattr(args, k, v)
 
     if args.device == "cuda":
-        import torch
+        import platform
 
-        if torch.cuda.is_available() is False:
-            parser.error(
-                "torch.cuda.is_available() is False, please use --device cpu or check your pytorch installation"
-            )
+        if platform.system() == "Darwin":
+            logger.info("MacOS does not support cuda, use cpu instead")
+            setattr(args, "device", "cpu")
+        else:
+            import torch
 
-    if args.sd_controlnet:
-        if args.model not in SD15_MODELS:
-            logger.warning(f"--sd_controlnet only support {SD15_MODELS}")
+            if torch.cuda.is_available() is False:
+                parser.error(
+                    "torch.cuda.is_available() is False, please use --device cpu or check your pytorch installation"
+                )
 
     if args.sd_local_model_path and args.model == "sd1.5":
         if not os.path.exists(args.sd_local_model_path):
@@ -231,13 +252,5 @@ def parse_args():
         else:
             if not output_dir.is_dir():
                 parser.error(f"invalid --output-dir: {output_dir} is not a directory")
-
-    if args.enable_gfpgan:
-        if args.enable_realesrgan:
-            logger.info("Use realesrgan as GFPGAN background upscaler")
-        else:
-            logger.info(
-                f"GFPGAN no background upscaler, use --enable-realesrgan to enable it"
-            )
 
     return args
